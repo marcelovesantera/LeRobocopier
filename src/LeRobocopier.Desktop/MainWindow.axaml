@@ -9,63 +9,89 @@
     <Border Background="#EFF2F5" Padding="16">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="12">
-          <Button Click="Configuracoes_Click" ToolTip.Tip="Configurações" AutomationProperties.Name="Configurações">
+          <Button Click="Settings_Click" ToolTip.Tip="Settings" AutomationProperties.Name="Settings">
             <PathIcon Width="20" Height="20" Data="M3,2 L17,2 L17,5 L3,5 Z M3,9 L17,9 L17,12 L3,12 Z M3,16 L17,16 L17,19 L3,19 Z" />
           </Button>
-          <Button Click="Novo_Click" IsEnabled="{Binding PodeCriar}" ToolTip.Tip="Novo projeto" AutomationProperties.Name="Novo projeto">
+          <Button Click="NewProject_Click" IsEnabled="{Binding CanCreate}" ToolTip.Tip="New project" AutomationProperties.Name="New project">
             <PathIcon Width="20" Height="20" Data="M9,1 L12,1 L12,9 L20,9 L20,12 L12,12 L12,20 L9,20 L9,12 L1,12 L1,9 L9,9 Z" />
           </Button>
         </StackPanel>
         <StackPanel Spacing="14">
           <TextBlock Text="Le Robocopier" FontWeight="Bold" FontSize="16" Margin="0,0,0,20" />
-          <Button Content="Copiar" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Disponível em uma próxima entrega" />
-          <Button Content="Mover" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Disponível em uma próxima entrega" />
-          <Button Content="Restaurar" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Disponível em uma próxima entrega" />
+          <Button Content="Copy" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Available in a future release" />
+          <Button Content="Move" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Available in a future release" />
+          <Button Content="Restore" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Available in a future release" />
         </StackPanel>
       </DockPanel>
     </Border>
     <Grid Grid.Column="1" RowDefinitions="*,Auto" Margin="28">
-      <Grid IsVisible="{Binding MostrarProjetos}" RowDefinitions="Auto,Auto,*">
-        <TextBlock Text="Projetos" FontSize="28" FontWeight="SemiBold" />
+      <Grid IsVisible="{Binding ShowProjects}" RowDefinitions="Auto,Auto,*">
+        <TextBlock Text="Projects" FontSize="28" FontWeight="SemiBold" />
         <StackPanel Grid.Row="1" Margin="0,16,0,16" Spacing="8">
-          <TextBlock Text="{Binding Selecao}" TextWrapping="Wrap" />
-          <TextBlock Text="Use Novo para cadastrar seu primeiro projeto." IsVisible="{Binding SemProjetos}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding Selection}" TextWrapping="Wrap" />
+          <TextBlock Text="Use New project to register your first project." IsVisible="{Binding NoProjects}" TextWrapping="Wrap" />
         </StackPanel>
-        <ListBox Grid.Row="2" ItemsSource="{Binding Projetos}" SelectedItem="{Binding Selecionado, Mode=TwoWay}" SelectionMode="Single,AlwaysSelected">
+        <ListBox Grid.Row="2" ItemsSource="{Binding Projects}" SelectedItem="{Binding Selected, Mode=TwoWay}" SelectionMode="Single,AlwaysSelected">
           <ListBox.ItemTemplate>
-            <DataTemplate x:DataType="core:Projeto">
+            <DataTemplate x:DataType="core:Project">
               <Border BorderBrush="#CAD2DC" BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,4">
                 <StackPanel Spacing="8">
-                  <TextBlock Text="{Binding Nome}" FontSize="20" TextWrapping="Wrap" />
-                  <TextBlock Text="Nenhum item configurado" Foreground="#536071" />
+                  <TextBlock Text="{Binding Name}" FontSize="20" TextWrapping="Wrap" />
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="{Binding Items.Count}" Foreground="#536071" />
+                    <TextBlock Text="configured item(s)" Foreground="#536071" />
+                  </StackPanel>
+                  <Button Content="Open project" Click="Open_Click" />
                 </StackPanel>
               </Border>
             </DataTemplate>
           </ListBox.ItemTemplate>
         </ListBox>
       </Grid>
-      <ScrollViewer IsVisible="{Binding MostrarConfiguracoes}">
+      <ScrollViewer IsVisible="{Binding ShowSettings}">
         <StackPanel Spacing="18">
-          <TextBlock Text="Configurações" FontSize="28" FontWeight="SemiBold" />
-          <TextBlock Text="Base de backup" FontWeight="Bold" />
-          <TextBlock Text="{Binding BaseBackup}" TextWrapping="Wrap" />
-          <TextBlock Text="A alteração da base e das confirmações será disponibilizada com os processos." TextWrapping="Wrap" />
-          <CheckBox Content="Confirmar Copiar" IsChecked="{Binding ConfirmarCopiar, Mode=OneWay}" IsEnabled="False" />
-          <CheckBox Content="Confirmar Mover" IsChecked="{Binding ConfirmarMover, Mode=OneWay}" IsEnabled="False" />
-          <CheckBox Content="Confirmar Restaurar" IsChecked="{Binding ConfirmarRestaurar, Mode=OneWay}" IsEnabled="False" />
-          <Button Content="Voltar aos projetos" Click="Projetos_Click" />
+          <TextBlock Text="Settings" FontSize="28" FontWeight="SemiBold" />
+          <TextBlock Text="Backup root" FontWeight="Bold" />
+          <TextBlock Text="{Binding BackupRoot}" TextWrapping="Wrap" />
+          <TextBlock Text="Editing the backup root and confirmations will be available with file operations." TextWrapping="Wrap" />
+          <CheckBox Content="Confirm Copy" IsChecked="{Binding ConfirmCopy, Mode=OneWay}" IsEnabled="False" />
+          <CheckBox Content="Confirm Move" IsChecked="{Binding ConfirmMove, Mode=OneWay}" IsEnabled="False" />
+          <CheckBox Content="Confirm Restore" IsChecked="{Binding ConfirmRestore, Mode=OneWay}" IsEnabled="False" />
+          <Button Content="Back to projects" Click="Projects_Click" />
         </StackPanel>
       </ScrollViewer>
-      <StackPanel IsVisible="{Binding MostrarNovo}" Spacing="18">
-        <TextBlock Text="Novo projeto" FontSize="28" FontWeight="SemiBold" />
-        <TextBlock Text="Nome do projeto" />
-        <TextBox Text="{Binding NomeNovo, Mode=TwoWay}" Watermark="Ex.: Documentos" AutomationProperties.Name="Nome do projeto" />
+      <StackPanel IsVisible="{Binding ShowNewProject}" Spacing="18">
+        <TextBlock Text="New project" FontSize="28" FontWeight="SemiBold" />
+        <TextBlock Text="Project name" />
+        <TextBox Text="{Binding NewName, Mode=TwoWay}" Watermark="Example: Documents" AutomationProperties.Name="Project name" />
         <StackPanel Orientation="Horizontal" Spacing="12">
-          <Button Content="Criar projeto" Click="Criar_Click" IsEnabled="{Binding PodeCriar}" />
-          <Button Content="Voltar" Click="Projetos_Click" />
+          <Button Content="Create project" Click="Create_Click" IsEnabled="{Binding CanCreate}" />
+          <Button Content="Back" Click="Projects_Click" />
         </StackPanel>
       </StackPanel>
-      <TextBlock Grid.Row="1" Text="{Binding Mensagem}" TextWrapping="Wrap" Margin="0,18,0,0" />
+      <Grid IsVisible="{Binding ShowEditor}" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="16">
+        <TextBlock Text="{Binding ProjectName}" FontSize="28" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12">
+          <Button Content="Add files" Click="AddFiles_Click" />
+          <Button Content="Add folders" Click="AddFolders_Click" />
+          <Button Content="Back" Click="Projects_Click" />
+        </StackPanel>
+        <TextBlock Grid.Row="2" Text="Folders include all content present at the time of the operation. Removing an item only changes the registry." TextWrapping="Wrap" />
+        <ListBox Grid.Row="3" ItemsSource="{Binding Items}" HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="core:SelectedItem">
+              <Grid ColumnDefinitions="*,Auto" Margin="0,6">
+                <StackPanel Spacing="4" Margin="0,0,12,0">
+                  <TextBlock Text="{Binding Type}" FontWeight="Bold" />
+                  <TextBlock Text="{Binding Path}" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="Remove" Click="Remove_Click" VerticalAlignment="Center" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+      <TextBlock Grid.Row="1" Text="{Binding Message}" TextWrapping="Wrap" Margin="0,18,0,0" />
     </Grid>
   </Grid>
 </Window>

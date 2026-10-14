@@ -1,0 +1,36 @@
+namespace LeRobocopier.Core;
+
+public enum ItemType { File, Folder }
+
+public sealed record SelectedItem(ItemType Type, string Path);
+
+public sealed record Project(Guid Id, string Name, bool Active, IReadOnlyList<SelectedItem> Items);
+
+public sealed record Confirmations(bool Copy = true, bool Move = true, bool Restore = true);
+
+public sealed record Configuration(int Version, string BackupRoot, Confirmations Confirmations,
+    IReadOnlyList<Project> Projects);
+
+public static class UserDirectories
+{
+    public static string Configuration() => Configuration(
+        OperatingSystem.IsWindows(),
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        Environment.GetEnvironmentVariable("XDG_CONFIG_HOME"));
+
+    // Explicit context allows validating resolution without changing the environment or real profile.
+    public static string Configuration(bool windows, string userFolder, string localAppData, string? xdgConfigHome)
+    {
+        var configurationRoot = localAppData;
+        if (!windows)
+        {
+            configurationRoot = !string.IsNullOrEmpty(xdgConfigHome) && Path.IsPathFullyQualified(xdgConfigHome)
+                ? xdgConfigHome : Path.Combine(userFolder, ".config");
+        }
+        return Path.Combine(configurationRoot, "LeRobocopier", "settings.xml");
+    }
+
+    public static string BackupRoot() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "LeRobocopier", "Backups");
+}
