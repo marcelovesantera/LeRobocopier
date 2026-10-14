@@ -1,15 +1,19 @@
 # Le Robocopier
 
-Aplicativo desktop C#/.NET 10 e Avalonia para organizar backups por Projeto, com cadastro persistido em XML.
+Le Robocopier is a desktop application for organizing backup projects on Windows and Linux. It gives each project a name and a place in a simple visual workspace, helping you keep different areas of your work organized.
 
-Funcionalidades implementadas:
+## A workspace for your projects
 
-- Cadastro de projetos pelo botão Novo, com salvamento automático.
-- Cards de projetos ativos com seleção de um único projeto.
-- Painel de Configurações com a base de backup e as preferências de confirmação.
-- Validação de nomes vazios, inválidos ou repetidos, incluindo projetos inativos.
-- Preservação do cadastro anterior em falhas de gravação e bloqueio do cadastro quando o XML existente é ilegível.
+Create named projects for areas such as documents, personal work, or client projects. Each active project appears as a card, and you can select one project at a time. Your project list is saved automatically and remains available when you reopen the application.
 
-Copiar, Mover e Restaurar estão indisponíveis. A base de backup e as preferências são exibidas para consulta.
+The Settings panel shows the backup location and confirmation preferences in one place. Project names are checked to prevent empty, invalid, or duplicate entries.
 
-Configuração: `%LOCALAPPDATA%\LeRobocopier\settings.xml` no Windows; `$XDG_CONFIG_HOME/LeRobocopier/settings.xml` no Linux, com `~/.config` quando XDG está ausente, vazio ou relativo. A base inicial é `LeRobocopier/Backups` dentro da pasta do usuário. O XML é criado ao salvar o primeiro projeto. Se o arquivo estiver ilegível, ele deve ser corrigido antes de reiniciar o aplicativo.
+## Current availability
+
+This early version supports project creation, automatic saving, and project selection. The backup location and confirmation preferences are available for viewing.
+
+File and folder selection, Copy, Move, and Restore are not available in this version. Creating a project does not copy, move, or back up any files.
+
+## Care for your project list
+
+If saving fails, Le Robocopier preserves the previously saved project list. If existing settings cannot be read, it blocks changes and displays an error instead of replacing them.
