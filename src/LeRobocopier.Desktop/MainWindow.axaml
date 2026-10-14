@@ -98,7 +98,12 @@
           <TextBlock Text="Folders include all content present at the time of the operation. Removing an item only changes the registry." TextWrapping="Wrap" />
           <Button Content="Deactivate project" Click="Deactivate_Click" />
         </StackPanel>
-        <ListBox Grid.Row="4" ItemsSource="{Binding Items}" HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+        <ListBox Grid.Row="4" ItemsSource="{Binding Items}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.Styles>
+            <Style Selector="ListBoxItem">
+              <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            </Style>
+          </ListBox.Styles>
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="core:SelectedItem">
               <Grid ColumnDefinitions="*,Auto" Margin="0,6">
