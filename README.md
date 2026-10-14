@@ -1,15 +1,20 @@
 # Le Robocopier
 
-Aplicativo desktop C#/.NET 10 e Avalonia para organizar backups por Projeto, com cadastro persistido em XML.
+A C#/.NET 10 and Avalonia desktop application for organizing backups by project, with configuration persisted in XML.
 
-Funcionalidades implementadas:
+Implemented features:
 
-- Cadastro de projetos pelo botão Novo, com salvamento automático.
-- Cards de projetos ativos com seleção de um único projeto.
-- Painel de Configurações com a base de backup e as preferências de confirmação.
-- Validação de nomes vazios, inválidos ou repetidos, incluindo projetos inativos.
-- Preservação do cadastro anterior em falhas de gravação e bloqueio do cadastro quando o XML existente é ilegível.
+- Create projects using New project, with automatic saving.
+- Active project cards with single selection.
+- Open project editor with native file and folder pickers, item types and full paths.
+- Add and remove items with automatic saving; removal preserves original files and backups.
+- Reject duplicate items, overlapping folders and selections that match, contain or are inside the backup root.
+- Settings panel showing the backup root and confirmation preferences.
+- Validate empty, invalid or duplicate names, including names reserved by inactive projects.
+- Preserve the previous configuration on write failures and disable changes when an existing XML file is unreadable.
 
-Copiar, Mover e Restaurar estão indisponíveis. A base de backup e as preferências são exibidas para consulta.
+Copy, Move and Restore are unavailable. The backup root and preferences are displayed for reference.
 
-Configuração: `%LOCALAPPDATA%\LeRobocopier\settings.xml` no Windows; `$XDG_CONFIG_HOME/LeRobocopier/settings.xml` no Linux, com `~/.config` quando XDG está ausente, vazio ou relativo. A base inicial é `LeRobocopier/Backups` dentro da pasta do usuário. O XML é criado ao salvar o primeiro projeto. Se o arquivo estiver ilegível, ele deve ser corrigido antes de reiniciar o aplicativo.
+A folder is registered as a single item: its contents are determined at the time of the operation. Returning from the editor keeps the project selected.
+
+Configuration location: `%LOCALAPPDATA%\LeRobocopier\settings.xml` on Windows; `$XDG_CONFIG_HOME/LeRobocopier/settings.xml` on Linux, falling back to `~/.config` when XDG is missing, empty or relative. The default backup root is `LeRobocopier/Backups` inside the user's home folder. The XML file is created when the first project is saved. An unreadable file must be corrected before restarting the application. Existing version-1 XML names are preserved for compatibility.
