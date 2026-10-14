@@ -18,13 +18,13 @@
         </StackPanel>
         <StackPanel Spacing="14">
           <TextBlock Text="Le Robocopier" FontWeight="Bold" FontSize="16" Margin="0,0,0,20" />
-          <Button Content="Copy" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Available in a future release" />
+          <Button Content="Copy" Click="Copy_Click" IsEnabled="{Binding CanCopy}" HorizontalAlignment="Stretch" />
           <Button Content="Move" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Available in a future release" />
           <Button Content="Restore" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Available in a future release" />
         </StackPanel>
       </DockPanel>
     </Border>
-    <Grid Grid.Column="1" RowDefinitions="*,Auto" Margin="28">
+    <Grid Grid.Column="1" RowDefinitions="*,Auto" Margin="28" IsEnabled="{Binding CanCreate}">
       <Grid IsVisible="{Binding ShowProjects}" RowDefinitions="Auto,Auto,*">
         <TextBlock Text="Projects" FontSize="28" FontWeight="SemiBold" />
         <StackPanel Grid.Row="1" Margin="0,16,0,16" Spacing="8">
@@ -53,8 +53,8 @@
           <TextBlock Text="Settings" FontSize="28" FontWeight="SemiBold" />
           <TextBlock Text="Backup root" FontWeight="Bold" />
           <TextBlock Text="{Binding BackupRoot}" TextWrapping="Wrap" />
-          <TextBlock Text="Editing the backup root and confirmations will be available with file operations." TextWrapping="Wrap" />
-          <CheckBox Content="Confirm Copy" IsChecked="{Binding ConfirmCopy, Mode=OneWay}" IsEnabled="False" />
+          <TextBlock Text="Copy confirmation applies to all projects. The backup root cannot be changed yet." TextWrapping="Wrap" />
+          <CheckBox Content="Confirm Copy" IsChecked="{Binding ConfirmCopy, Mode=TwoWay}" />
           <CheckBox Content="Confirm Move" IsChecked="{Binding ConfirmMove, Mode=OneWay}" IsEnabled="False" />
           <CheckBox Content="Confirm Restore" IsChecked="{Binding ConfirmRestore, Mode=OneWay}" IsEnabled="False" />
           <Button Content="Back to projects" Click="Projects_Click" />
