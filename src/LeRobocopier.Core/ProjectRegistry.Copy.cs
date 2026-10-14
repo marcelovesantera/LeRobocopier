@@ -7,6 +7,12 @@ namespace LeRobocopier.Core;
 public sealed partial class ProjectRegistry
 {
     public CopyPreparation PrepareCopy(Guid projectId, IProgress<OperationProgress>? progress = null)
+        => PrepareCopy(projectId, false, progress);
+
+    public CopyPreparation PrepareRestore(Guid projectId, IProgress<OperationProgress>? progress = null)
+        => PrepareCopy(projectId, true, progress);
+
+    private CopyPreparation PrepareCopy(Guid projectId, bool restore, IProgress<OperationProgress>? progress)
     {
         Guid id;
         lock (gate)
@@ -16,8 +22,15 @@ public sealed partial class ProjectRegistry
             id = Guid.NewGuid();
             executionId = id;
             copyProjectId = projectId;
+            restoreOperation = restore;
+            inventoryPath = null;
         }
-        try { return new CopyPreparation(InventoryCopy(id, projectId, progress), null); }
+        try
+        {
+            var plan = InventoryCopy(id, projectId, restore, progress);
+            preparedOverwrites = plan.Overwrites ?? Array.Empty<string>();
+            return new CopyPreparation(plan, null);
+        }
         catch (Exception error)
         {
             lock (gate) executionId = null;
@@ -36,11 +49,19 @@ public sealed partial class ProjectRegistry
     }
 
     public CopyResult Copy(CopyPlan plan, bool disableConfirmation = false, IProgress<OperationProgress>? progress = null)
+        => Copy(plan, false, disableConfirmation, progress);
+
+    public CopyResult Restore(CopyPlan plan, bool disableConfirmation = false, IProgress<OperationProgress>? progress = null)
+        => Copy(plan, true, disableConfirmation, progress);
+
+    private CopyResult Copy(CopyPlan plan, bool restore, bool disableConfirmation, IProgress<OperationProgress>? progress)
     {
         lock (gate)
         {
             if (executionId != plan.ExecutionId) throw new InvalidOperationException("This operation is no longer active.");
             if (copyProjectId != plan.ProjectId) throw new InvalidOperationException("The prepared project cannot be changed.");
+            if (restoreOperation != restore || plan.IsRestore != restore)
+                throw new InvalidOperationException("The prepared operation cannot be changed.");
             // Claim the prepared operation once, including against callers using the same plan.
             if (copyRunning) throw new InvalidOperationException("This operation is already running.");
             copyRunning = true;
@@ -50,17 +71,29 @@ public sealed partial class ProjectRegistry
         var warnings = new List<OperationIssue>();
         var stage = OperationStage.Preparing;
         var current = "";
+        var restoreConfirmationRequired = restore && State.Confirmations.Restore;
         inventoryPath = null;
         try
         {
             if (disableConfirmation)
             {
                 current = file;
-                Save(State with { Confirmations = State.Confirmations with { Copy = false } });
+                Save(State with { Confirmations = restore
+                    ? State.Confirmations with { Restore = false }
+                    : State.Confirmations with { Copy = false } });
             }
             // Confirmation may have taken arbitrarily long; the old inventory authorizes no writes.
-            var inventory = InventoryCopy(plan.ExecutionId, plan.ProjectId, progress);
+            var inventory = InventoryCopy(plan.ExecutionId, plan.ProjectId, restore, progress);
             warnings.AddRange(inventory.Warnings);
+            var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            var confirmedOverwrites = new HashSet<string>(preparedOverwrites, pathComparer);
+            var newOverwrite = restoreConfirmationRequired
+                ? inventory.Overwrites!.FirstOrDefault(path => !confirmedOverwrites.Contains(path)) : null;
+            if (newOverwrite is not null)
+            {
+                inventoryPath = newOverwrite;
+                throw new IOException("The overwrite list changed after preparation. Prepare Restore again to review it.");
+            }
             var files = inventory.Entries.Where(entry => entry.Type == ItemType.File).ToArray();
             var expected = new Dictionary<string, (long Length, byte[] Hash)>();
             stage = OperationStage.Copying;
@@ -109,13 +142,22 @@ public sealed partial class ProjectRegistry
                                 throw new IOException("The source size changed while copying.");
                         }
                         ValidateCopyPath(entry.Destination, ItemType.File, true);
+                        if (restoreConfirmationRequired && File.Exists(entry.Destination) &&
+                            !confirmedOverwrites.Contains(entry.Destination))
+                            throw new IOException($"A new overwrite appeared during Restore: {entry.Destination}. Prepare Restore again to review it.");
                         if (OperatingSystem.IsWindows() && File.Exists(entry.Destination) && SameWindowsFile(source, entry.Destination))
-                            throw new IOException($"The backup path is a hard link to the source: {entry.Destination}");
-                        written.Add(entry.Destination);
-                        if (OperatingSystem.IsWindows() && File.Exists(entry.Destination))
+                            throw new IOException($"The destination is a hard link to the source: {entry.Destination}");
+                        if (OperatingSystem.IsWindows() && File.Exists(entry.Destination) &&
+                            (File.GetAttributes(entry.Destination) & FileAttributes.ReadOnly) != 0)
+                        {
+                            // Removing ReadOnly is already a partial effect even if replacement fails.
+                            written.Add(entry.Destination);
                             File.SetAttributes(entry.Destination, File.GetAttributes(entry.Destination) & ~FileAttributes.ReadOnly);
+                        }
                         // Replacement avoids truncating the source through a destination hard link.
-                        File.Move(temporary, entry.Destination, true);
+                        File.Move(temporary, entry.Destination,
+                            !restoreConfirmationRequired || confirmedOverwrites.Contains(entry.Destination));
+                        if (!written.Contains(entry.Destination)) written.Add(entry.Destination);
                         written.Remove(temporary);
                     }
                     finally
@@ -190,55 +232,66 @@ public sealed partial class ProjectRegistry
     private bool copyRunning;
     private Guid copyProjectId;
     private string? inventoryPath;
+    private bool restoreOperation;
+    private IReadOnlyList<string> preparedOverwrites = Array.Empty<string>();
 
-    private CopyPlan InventoryCopy(Guid id, Guid projectId, IProgress<OperationProgress>? progress)
+    private CopyPlan InventoryCopy(Guid id, Guid projectId, bool restore, IProgress<OperationProgress>? progress)
     {
         var project = GetProject(projectId);
         var entries = new List<CopyEntry>();
         var warnings = new List<OperationIssue>();
+        var overwrites = new List<string>();
         var destinationRoot = NormalizePath(Path.Combine(State.BackupRoot, project.Name));
         inventoryPath = destinationRoot;
         ValidateCopyPath(destinationRoot, ItemType.Folder, true);
         foreach (var selected in project.Items)
         {
-            inventoryPath = selected.Path;
-            try { ValidateCopyPath(selected.Path, selected.Type, false); }
+            var original = NormalizePath(selected.Path);
+            var root = Path.GetPathRoot(original)!;
+            var rootName = OperatingSystem.IsWindows()
+                ? Path.Combine("UNC", root.Trim(Path.DirectorySeparatorChar)) : "root";
+            if (OperatingSystem.IsWindows() && root.Length == 3 && root[1] == ':') rootName = root[..1];
+            var backup = NormalizePath(Path.Combine(destinationRoot, rootName, original[root.Length..]));
+            if (!ContainsPath(destinationRoot, backup)) throw new IOException($"Invalid mapped destination: {backup}");
+            var selectedSource = restore ? backup : original;
+            inventoryPath = selectedSource;
+            try { ValidateCopyPath(selectedSource, selected.Type, false); }
             catch (FileNotFoundException)
             {
-                warnings.Add(new OperationIssue(OperationStage.Preparing, selected.Path, "The selected item is missing."));
+                warnings.Add(new OperationIssue(OperationStage.Preparing, selectedSource,
+                    restore ? "The selected item is missing from the backup." : "The selected item is missing."));
                 continue;
             }
             catch (DirectoryNotFoundException)
             {
-                warnings.Add(new OperationIssue(OperationStage.Preparing, selected.Path, "The selected item is missing."));
+                warnings.Add(new OperationIssue(OperationStage.Preparing, selectedSource,
+                    restore ? "The selected item is missing from the backup." : "The selected item is missing."));
                 continue;
             }
             var pending = new Stack<SelectedItem>();
-            pending.Push(selected);
+            pending.Push(new SelectedItem(selected.Type, selectedSource));
             while (pending.TryPop(out var item))
             {
                 var source = NormalizePath(item.Path);
                 inventoryPath = source;
                 ValidateCopyPath(source, item.Type, false);
                 progress?.Report(new OperationProgress(OperationStage.Preparing, source, entries.Count, 0));
-                var root = Path.GetPathRoot(source)!;
-                var rootName = OperatingSystem.IsWindows()
-                    ? Path.Combine("UNC", root.Trim(Path.DirectorySeparatorChar))
-                    : "root";
-                // UNC roots keep server/share components; local drives use their drive letter.
-                if (OperatingSystem.IsWindows() && root.Length == 3 && root[1] == ':') rootName = root[..1];
-                var destination = NormalizePath(Path.Combine(destinationRoot, rootName, source[root.Length..]));
-                if (!ContainsPath(destinationRoot, destination)) throw new IOException($"Invalid mapped destination: {destination}");
+                // Relative descendants are anchored to the registered original, never inferred from a filename.
+                var destination = NormalizePath(Path.Combine(restore ? original : backup,
+                    Path.GetRelativePath(selectedSource, source)));
+                if (!ContainsPath(restore ? original : backup, destination))
+                    throw new IOException($"Invalid mapped destination: {destination}");
                 inventoryPath = destination;
                 ValidateCopyPath(destination, item.Type, true);
                 entries.Add(new CopyEntry(item.Type, source, destination));
+                if (restore && item.Type == ItemType.File && File.Exists(destination)) overwrites.Add(destination);
                 if (item.Type == ItemType.File)
                 {
                     inventoryPath = source;
                     using var readable = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read,
                         128 * 1024, FileOptions.SequentialScan);
                     if (OperatingSystem.IsWindows() && File.Exists(destination) && SameWindowsFile(readable, destination))
-                        throw new IOException($"The backup path is a hard link to the source: {destination}");
+                        throw new IOException($"The destination is a hard link to the source: {destination}");
                     SHA256.HashData(readable);
                 }
                 if (item.Type == ItemType.Folder)
@@ -254,7 +307,7 @@ public sealed partial class ProjectRegistry
                 }
             }
         }
-        return new CopyPlan(id, projectId, entries.AsReadOnly(), warnings.AsReadOnly());
+        return new CopyPlan(id, projectId, entries.AsReadOnly(), warnings.AsReadOnly(), restore, overwrites.AsReadOnly());
     }
 
     private static void ValidateCopyPath(string path, ItemType type, bool allowMissing)

@@ -20,7 +20,8 @@ public sealed record OperationIssue(OperationStage Stage, string Path, string Me
 public sealed record CopyEntry(ItemType Type, string Source, string Destination);
 
 public sealed record CopyPlan(Guid ExecutionId, Guid ProjectId, IReadOnlyList<CopyEntry> Entries,
-    IReadOnlyList<OperationIssue> Warnings);
+    IReadOnlyList<OperationIssue> Warnings, bool IsRestore = false,
+    IReadOnlyList<string>? Overwrites = null);
 
 public sealed record CopyPreparation(CopyPlan? Plan, OperationIssue? Failure);
 
