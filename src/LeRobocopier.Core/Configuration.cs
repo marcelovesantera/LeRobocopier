@@ -11,6 +11,25 @@ public sealed record Confirmations(bool Copy = true, bool Move = true, bool Rest
 public sealed record Configuration(int Version, string BackupRoot, Confirmations Confirmations,
     IReadOnlyList<Project> Projects);
 
+public enum OperationStage { Preparing, Copying, Verifying, Metadata, Completed }
+
+public sealed record OperationProgress(OperationStage Stage, string Path, long Completed, long Total);
+
+public sealed record OperationIssue(OperationStage Stage, string Path, string Message);
+
+public sealed record CopyEntry(ItemType Type, string Source, string Destination);
+
+public sealed record CopyPlan(Guid ExecutionId, Guid ProjectId, IReadOnlyList<CopyEntry> Entries,
+    IReadOnlyList<OperationIssue> Warnings);
+
+public sealed record CopyPreparation(CopyPlan? Plan, OperationIssue? Failure);
+
+public sealed record CopyResult(IReadOnlyList<string> WrittenPaths, IReadOnlyList<string> VerifiedFiles,
+    IReadOnlyList<OperationIssue> Warnings, OperationIssue? Failure)
+{
+    public bool Success => Failure is null && WrittenPaths.Count > 0;
+}
+
 public static class UserDirectories
 {
     public static string Configuration() => Configuration(

@@ -6,22 +6,47 @@ namespace LeRobocopier.Desktop;
 
 public enum MainPanel { Projects, Settings, NewProject, Editor }
 
-public sealed class MainWindowViewModel : INotifyPropertyChanged
+public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly ProjectRegistry? registry;
     private MainPanel panel = MainPanel.Projects;
     private string message = "";
     private string newName = "";
     private Project? selected;
+    private bool isBusy;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public IReadOnlyList<Project> Projects => registry?.State.Projects.Where(project => project.Active).ToArray()
         ?? Array.Empty<Project>();
     public string BackupRoot => registry?.State.BackupRoot ?? "Unavailable";
-    public bool ConfirmCopy => registry?.State.Confirmations.Copy ?? true;
+    public bool ConfirmCopy
+    {
+        get => registry?.State.Confirmations.Copy ?? true;
+        set
+        {
+            try { registry?.SetCopyConfirmation(value); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                Message = error.Message;
+            }
+            Notify();
+        }
+    }
     public bool ConfirmMove => registry?.State.Confirmations.Move ?? true;
     public bool ConfirmRestore => registry?.State.Confirmations.Restore ?? true;
-    public bool CanCreate => registry is not null;
+    public bool CanCreate => registry is not null && !IsBusy;
+    public bool CanCopy => CanCreate && Selected is not null;
+    public bool IsBusy
+    {
+        get => isBusy;
+        set
+        {
+            isBusy = value;
+            Notify();
+            Notify(nameof(CanCreate));
+            Notify(nameof(CanCopy));
+        }
+    }
     public bool ShowProjects => panel == MainPanel.Projects;
     public bool ShowSettings => panel == MainPanel.Settings;
     public bool ShowNewProject => panel == MainPanel.NewProject;
@@ -41,6 +66,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             Notify(nameof(Selection));
             Notify(nameof(Items));
             Notify(nameof(ProjectName));
+            Notify(nameof(CanCopy));
         }
     }
     public string Selection => Selected is null ? "Select a project." : $"Selected project: {Selected.Name}";
@@ -56,6 +82,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public void Navigate(MainPanel destination)
     {
+        if (IsBusy) return;
         panel = destination;
         Notify(nameof(ShowProjects));
         Notify(nameof(ShowSettings));
@@ -79,7 +106,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             UpdateProject(updated);
             Message = "Items saved.";
         }
-        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException)
+        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             Message = error.Message;
         }
@@ -93,13 +120,25 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             UpdateProject(registry.RemoveItem(Selected.Id, item));
             Message = "Item removed from the registry. Files were preserved.";
         }
-        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException)
+        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             Message = error.Message;
         }
     }
 
     public void ReportError(string error) => Message = error;
+
+    public CopyPreparation PrepareCopy(Guid projectId, IProgress<OperationProgress> progress) =>
+        registry!.PrepareCopy(projectId, progress);
+
+    public CopyResult Copy(CopyPlan plan, bool disableConfirmation, IProgress<OperationProgress> progress) =>
+        registry!.Copy(plan, disableConfirmation, progress);
+
+    public void AbandonCopy(CopyPlan plan) => registry!.AbandonCopy(plan);
+
+    public void RefreshConfirmation() => Notify(nameof(ConfirmCopy));
+
+    public void Dispose() => registry?.Dispose();
 
     private void UpdateProject(Project project)
     {
@@ -124,7 +163,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             Navigate(MainPanel.Projects);
         }
         catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException
-            or System.Xml.XmlException)
+            or System.Xml.XmlException or InvalidOperationException)
         {
             Message = error.Message;
         }

@@ -13,9 +13,10 @@ public sealed class ProjectRegistryTests : IDisposable
     [Fact]
     public void Create_AfterReopening_PreservesRegistryAndPreferences()
     {
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Research & documentation");
-        var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+        registry.Dispose();
+        using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
 
         var saved = Assert.Single(reopened.State.Projects);
         Assert.Equal(project.Id, saved.Id);
@@ -37,7 +38,7 @@ public sealed class ProjectRegistryTests : IDisposable
     [InlineData(" name")]
     public void Create_WithInvalidName_PreservesDiskAndMemory(string name)
     {
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         registry.Create("Existing");
         var bytes = File.ReadAllBytes(SettingsFile);
 
@@ -50,13 +51,14 @@ public sealed class ProjectRegistryTests : IDisposable
     [Fact]
     public void Create_WithNameReservedByInactiveProject_RejectsWithoutChangingRegistry()
     {
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Existing");
         var xml = XDocument.Load(SettingsFile);
         xml.Root!.Element("Projetos")!.Element("Projeto")!.SetAttributeValue("ativo", false);
         xml.Root.Element("Confirmacoes")!.SetAttributeValue("copiar", false);
         xml.Save(SettingsFile);
-        var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+        registry.Dispose();
+        using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
         var bytes = File.ReadAllBytes(SettingsFile);
 
         Assert.Throws<ArgumentException>(() => reopened.Create("EXISTING"));
@@ -72,24 +74,27 @@ public sealed class ProjectRegistryTests : IDisposable
     [Fact]
     public void Create_WhenReplacementFails_PreservesLastPersistedState()
     {
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         registry.Create("Existing");
         var bytes = File.ReadAllBytes(SettingsFile);
-        var failure = new ProjectRegistry(SettingsFile, BackupRoot,
+        registry.Dispose();
+        using var failure = new ProjectRegistry(SettingsFile, BackupRoot,
             (_, _) => throw new IOException("Simulated disk failure."));
 
         Assert.Throws<IOException>(() => failure.Create("New"));
 
         Assert.Single(failure.State.Projects);
         Assert.Equal(bytes, File.ReadAllBytes(SettingsFile));
-        Assert.Single(new ProjectRegistry(SettingsFile, BackupRoot).State.Projects);
+        failure.Dispose();
+        using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+        Assert.Single(reopened.State.Projects);
         Assert.Empty(Directory.GetFiles(directory, "*.tmp"));
     }
 
     [Fact]
     public void Create_WhenFirstWriteFails_DoesNotPublishProject()
     {
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot,
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot,
             (_, _) => throw new UnauthorizedAccessException("Simulated access denial."));
 
         Assert.Throws<IOException>(() => registry.Create("New"));
@@ -112,14 +117,14 @@ public sealed class ProjectRegistryTests : IDisposable
         Assert.Throws<InvalidDataException>(() => new ProjectRegistry(SettingsFile, BackupRoot));
 
         Assert.Equal(bytes, File.ReadAllBytes(SettingsFile));
-        Assert.Single(Directory.GetFiles(directory));
+        Assert.Single(Directory.GetFiles(directory, "*.xml"));
     }
 
     [Fact]
     public void Create_WithReservedWindowsName_RejectsOnWindows()
     {
         if (!OperatingSystem.IsWindows()) return;
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         foreach (var name in new[] { "CON", "CON .txt", "nul.txt", "COM1", "LPT².txt", "name.", "name:child", "name\\child" })
             Assert.Throws<ArgumentException>(() => registry.Create(name));
         Assert.Empty(registry.State.Projects);
@@ -153,9 +158,11 @@ public sealed class ProjectRegistryTests : IDisposable
     public void Create_WithLinuxBackslash_PreservesName()
     {
         if (OperatingSystem.IsWindows()) return;
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Research\\data");
-        Assert.Equal(project.Name, Assert.Single(new ProjectRegistry(SettingsFile, BackupRoot).State.Projects).Name);
+        registry.Dispose();
+        using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+        Assert.Equal(project.Name, Assert.Single(reopened.State.Projects).Name);
     }
 
     [Theory]
@@ -164,7 +171,7 @@ public sealed class ProjectRegistryTests : IDisposable
     [InlineData("Unknown")]
     public void Open_WithUnknownStructure_PreservesDocument(string element)
     {
-        new ProjectRegistry(SettingsFile, BackupRoot).Create("Existing");
+        using (var registry = new ProjectRegistry(SettingsFile, BackupRoot)) registry.Create("Existing");
         var xml = XDocument.Load(SettingsFile);
         xml.Root!.Add(new XElement(element));
         xml.Save(SettingsFile);
@@ -176,7 +183,7 @@ public sealed class ProjectRegistryTests : IDisposable
     [Fact]
     public void Create_WithInvalidXmlCharacter_RejectsWithClearMessage()
     {
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var error = Assert.Throws<ArgumentException>(() => registry.Create("Research\uFFFF"));
         Assert.Contains("XML configuration", error.Message);
         Assert.Empty(registry.State.Projects);
@@ -186,7 +193,7 @@ public sealed class ProjectRegistryTests : IDisposable
     [Fact]
     public void Open_WithUnknownRootAttribute_PreservesDocument()
     {
-        new ProjectRegistry(SettingsFile, BackupRoot).Create("Existing");
+        using (var registry = new ProjectRegistry(SettingsFile, BackupRoot)) registry.Create("Existing");
         var xml = XDocument.Load(SettingsFile);
         xml.Root!.Element("BaseBackup")!.SetAttributeValue("source", "unknown");
         xml.Save(SettingsFile);
@@ -202,13 +209,15 @@ public sealed class ProjectRegistryTests : IDisposable
         var otherFolder = Directory.CreateDirectory(Path.Combine(directory, "Other location")).FullName;
         var file = Path.Combine(otherFolder, "text & data.txt");
         File.WriteAllText(file, "original");
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Project");
         registry.AddItems(project.Id, [new(ItemType.Folder, folder + Path.DirectorySeparatorChar),
             new(ItemType.File, Path.Combine(otherFolder, ".", "text & data.txt"))]);
         File.WriteAllText(Path.Combine(folder, "new.txt"), "new content");
 
-        var saved = Assert.Single(new ProjectRegistry(SettingsFile, BackupRoot).State.Projects);
+        registry.Dispose();
+        using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+        var saved = Assert.Single(reopened.State.Projects);
         Assert.Equal(project.Id, saved.Id);
         Assert.Equal(new[] { new SelectedItem(ItemType.Folder, folder), new SelectedItem(ItemType.File, file) }, saved.Items);
         Assert.Equal(2, XDocument.Load(SettingsFile).Descendants("Item").Count());
@@ -223,7 +232,7 @@ public sealed class ProjectRegistryTests : IDisposable
         var folder = Directory.CreateDirectory(Path.Combine(directory, "Source")).FullName;
         var file = Path.Combine(folder, "text.txt");
         File.WriteAllText(file, "content");
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Project");
         var folderItem = new SelectedItem(ItemType.Folder, folder);
         var fileItem = new SelectedItem(ItemType.File, file);
@@ -241,7 +250,7 @@ public sealed class ProjectRegistryTests : IDisposable
     public void AddItems_WithDuplicateInBatch_DoesNotPublishValidPart()
     {
         var folder = Directory.CreateDirectory(Path.Combine(directory, "Source")).FullName;
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Project");
         var bytes = File.ReadAllBytes(SettingsFile);
 
@@ -258,12 +267,14 @@ public sealed class ProjectRegistryTests : IDisposable
         var folder = Directory.CreateDirectory(Path.Combine(directory, "Source")).FullName;
         var similar = Directory.CreateDirectory(Path.Combine(directory, "Source-extra")).FullName;
         var similarRoot = Directory.CreateDirectory(BackupRoot + "-extra").FullName;
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Project");
 
         registry.AddItems(project.Id, [new(ItemType.Folder, folder), new(ItemType.Folder, similar), new(ItemType.Folder, similarRoot)]);
 
-        Assert.Equal(3, new ProjectRegistry(SettingsFile, BackupRoot).State.Projects[0].Items.Count);
+        registry.Dispose();
+        using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+        Assert.Equal(3, reopened.State.Projects[0].Items.Count);
     }
 
     [Fact]
@@ -273,7 +284,7 @@ public sealed class ProjectRegistryTests : IDisposable
         var subfolder = Directory.CreateDirectory(Path.Combine(BackupRoot, "subfolder")).FullName;
         var file = Path.Combine(BackupRoot, "file.txt");
         File.WriteAllText(file, "backup");
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Project");
         var bytes = File.ReadAllBytes(SettingsFile);
 
@@ -292,7 +303,7 @@ public sealed class ProjectRegistryTests : IDisposable
         var folder = Directory.CreateDirectory(Path.Combine(directory, "Source")).FullName;
         var differentCase = Path.Combine(directory, "source");
         if (!OperatingSystem.IsWindows()) Directory.CreateDirectory(differentCase);
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Project");
         registry.AddItems(project.Id, [new(ItemType.Folder, folder)]);
         var bytes = File.ReadAllBytes(SettingsFile);
@@ -305,7 +316,9 @@ public sealed class ProjectRegistryTests : IDisposable
         else
         {
             registry.AddItems(project.Id, [new(ItemType.Folder, differentCase)]);
-            Assert.Equal(2, new ProjectRegistry(SettingsFile, BackupRoot).State.Projects[0].Items.Count);
+            registry.Dispose();
+            using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+            Assert.Equal(2, reopened.State.Projects[0].Items.Count);
         }
     }
 
@@ -317,12 +330,13 @@ public sealed class ProjectRegistryTests : IDisposable
         var folder = Directory.CreateDirectory(Path.Combine(directory, "Source")).FullName;
         var file = Path.Combine(folder, "text.txt");
         File.WriteAllText(file, "original");
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Project");
         var item = new SelectedItem(ItemType.File, file);
         if (remove) registry.AddItems(project.Id, [item]);
         var bytes = File.ReadAllBytes(SettingsFile);
-        var failure = new ProjectRegistry(SettingsFile, BackupRoot, (_, _) => throw new IOException("Simulated failure."));
+        registry.Dispose();
+        using var failure = new ProjectRegistry(SettingsFile, BackupRoot, (_, _) => throw new IOException("Simulated failure."));
         var state = failure.State;
 
         Assert.Throws<IOException>(() => { if (remove) failure.RemoveItem(project.Id, item); else failure.AddItems(project.Id, [item]); });
@@ -342,19 +356,22 @@ public sealed class ProjectRegistryTests : IDisposable
         Directory.CreateDirectory(BackupRoot);
         var copy = Path.Combine(BackupRoot, "copy.txt");
         File.WriteAllText(copy, "existing backup");
-        var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
         var project = registry.Create("Project");
         var item = new SelectedItem(ItemType.File, file);
         registry.AddItems(project.Id, [item]);
         var missing = file + ".temporary";
         File.Move(file, missing);
-        var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+        registry.Dispose();
+        using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
         Assert.Equal(item, Assert.Single(reopened.State.Projects[0].Items));
         File.Move(missing, file);
 
         reopened.RemoveItem(project.Id, item);
 
-        Assert.Empty(new ProjectRegistry(SettingsFile, BackupRoot).State.Projects[0].Items);
+        reopened.Dispose();
+        using var saved = new ProjectRegistry(SettingsFile, BackupRoot);
+        Assert.Empty(saved.State.Projects[0].Items);
         Assert.Equal("original", File.ReadAllText(file));
         Assert.Equal("existing backup", File.ReadAllText(copy));
     }
@@ -364,7 +381,7 @@ public sealed class ProjectRegistryTests : IDisposable
     [InlineData("Arquivo", "relative")]
     public void Open_WithInvalidItem_PreservesDocument(string type, string path)
     {
-        new ProjectRegistry(SettingsFile, BackupRoot).Create("Project");
+        using (var registry = new ProjectRegistry(SettingsFile, BackupRoot)) registry.Create("Project");
         var xml = XDocument.Load(SettingsFile);
         xml.Descendants("Itens").Single().Add(new XElement("Item", new XAttribute("tipo", type),
             new XAttribute("caminho", path == "absolute" ? Path.Combine(directory, "missing.txt") : path)));

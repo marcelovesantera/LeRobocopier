@@ -4,10 +4,14 @@ using System.Xml.Linq;
 namespace LeRobocopier.Core;
 
 // Changes become visible only after replacing the XML file on disk.
-public sealed class ProjectRegistry
+public sealed partial class ProjectRegistry : IDisposable
 {
     private readonly string file;
     private readonly Action<string, string> replaceFile;
+    private readonly object gate = new();
+    private readonly FileStream instanceLock;
+    private Guid? executionId;
+    private bool disposed;
 
     public Configuration State { get; private set; }
 
@@ -15,7 +19,18 @@ public sealed class ProjectRegistry
         Action<string, string>? replaceFile = null)
     {
         this.file = Path.GetFullPath(file);
+        var initial = Initial(defaultRoot);
         this.replaceFile = replaceFile ?? ((temporary, destination) => File.Move(temporary, destination, true));
+        Directory.CreateDirectory(Path.GetDirectoryName(this.file)!);
+        try
+        {
+            // Keep the lock file in place: deleting it could allow two leases on different inodes.
+            instanceLock = new FileStream(this.file + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException error)
+        {
+            throw new IOException("Another application instance is using this configuration, or its lock is inaccessible.", error);
+        }
         // File.Exists also returns false on access errors; opening the file protects unreadable state.
         try
         {
@@ -25,29 +40,34 @@ public sealed class ProjectRegistry
         }
         catch (FileNotFoundException)
         {
-            State = Initial(defaultRoot);
+            State = initial;
         }
         catch (DirectoryNotFoundException)
         {
-            State = Initial(defaultRoot);
+            State = initial;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or XmlException
             or FormatException or InvalidOperationException or ArgumentException)
         {
+            instanceLock.Dispose();
             throw new InvalidDataException($"Could not read {this.file}. The existing file was preserved.", error);
         }
     }
 
     public Project Create(string name)
     {
-        ValidateName(name);
-        if (State.Projects.Any(project => string.Equals(project.Name, name, StringComparison.OrdinalIgnoreCase)))
-            throw new ArgumentException("An active or inactive project already has this name.", nameof(name));
+        lock (gate)
+        {
+            EnsureIdle();
+            ValidateName(name);
+            if (State.Projects.Any(project => string.Equals(project.Name, name, StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException("An active or inactive project already has this name.", nameof(name));
 
-        var project = new Project(Guid.NewGuid(), name, true, Array.Empty<SelectedItem>());
-        var projects = Array.AsReadOnly(State.Projects.Append(project).ToArray());
-        Save(State with { Projects = projects });
-        return project;
+            var project = new Project(Guid.NewGuid(), name, true, Array.Empty<SelectedItem>());
+            var projects = Array.AsReadOnly(State.Projects.Append(project).ToArray());
+            Save(State with { Projects = projects });
+            return project;
+        }
     }
 
     private static Configuration Initial(string defaultRoot)
@@ -59,25 +79,59 @@ public sealed class ProjectRegistry
 
     public Project AddItems(Guid projectId, IReadOnlyList<SelectedItem> selection)
     {
-        var project = GetProject(projectId);
-        var items = project.Items.ToList();
-        foreach (var selected in selection)
+        lock (gate)
         {
-            var item = selected with { Path = NormalizePath(selected.Path) };
-            ValidateItem(item, items, State.BackupRoot);
-            var exists = item.Type == ItemType.Folder ? Directory.Exists(item.Path) : File.Exists(item.Path);
-            if (!exists) throw new ArgumentException($"The selected {item.Type.ToString().ToLowerInvariant()} does not exist or is inaccessible: {item.Path}");
-            items.Add(item);
+            EnsureIdle();
+            var project = GetProject(projectId);
+            var items = project.Items.ToList();
+            foreach (var selected in selection)
+            {
+                var item = selected with { Path = NormalizePath(selected.Path) };
+                ValidateItem(item, items, State.BackupRoot);
+                var exists = item.Type == ItemType.Folder ? Directory.Exists(item.Path) : File.Exists(item.Path);
+                if (!exists) throw new ArgumentException($"The selected {item.Type.ToString().ToLowerInvariant()} does not exist or is inaccessible: {item.Path}");
+                items.Add(item);
+            }
+            if (selection.Count == 0) return project;
+            return UpdateItems(project, items);
         }
-        if (selection.Count == 0) return project;
-        return UpdateItems(project, items);
     }
 
     public Project RemoveItem(Guid projectId, SelectedItem item)
     {
-        var project = GetProject(projectId);
-        if (!project.Items.Contains(item)) throw new ArgumentException("The item does not belong to this project.", nameof(item));
-        return UpdateItems(project, project.Items.Where(registered => registered != item).ToList());
+        lock (gate)
+        {
+            EnsureIdle();
+            var project = GetProject(projectId);
+            if (!project.Items.Contains(item)) throw new ArgumentException("The item does not belong to this project.", nameof(item));
+            return UpdateItems(project, project.Items.Where(registered => registered != item).ToList());
+        }
+    }
+
+    public void SetCopyConfirmation(bool enabled)
+    {
+        lock (gate)
+        {
+            EnsureIdle();
+            Save(State with { Confirmations = State.Confirmations with { Copy = enabled } });
+        }
+    }
+
+    private void EnsureIdle()
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (executionId is not null) throw new InvalidOperationException("An operation is already in progress. Changes are blocked until it finishes.");
+    }
+
+    public void Dispose()
+    {
+        lock (gate)
+        {
+            if (disposed) return;
+            EnsureIdle();
+            disposed = true;
+            instanceLock.Dispose();
+        }
     }
 
     private Project GetProject(Guid id) => State.Projects.FirstOrDefault(project => project.Id == id && project.Active)
