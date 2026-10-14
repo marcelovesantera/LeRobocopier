@@ -15,12 +15,17 @@ public partial class MainWindow : Window
         Closed += (_, _) => (DataContext as MainWindowViewModel)?.Dispose();
     }
 
-    private async void Copy_Click(object? sender, RoutedEventArgs args)
+    private async void Copy_Click(object? sender, RoutedEventArgs args) => await RunOperation(false);
+
+    private async void Restore_Click(object? sender, RoutedEventArgs args) => await RunOperation(true);
+
+    private async Task RunOperation(bool restore)
     {
         if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCopy) return;
+        var operation = restore ? "Restore" : "Copy";
         var project = viewModel.Selected!;
         viewModel.IsBusy = true;
-        var (modal, details, bar, summary, choices, content) = CreateOperationDialog("Copy", project.Name);
+        var (modal, details, bar, summary, choices, content) = CreateOperationDialog(operation, project.Name);
         var running = true;
         modal.Closing += (_, eventArgs) => eventArgs.Cancel = running;
         var modalClosed = modal.ShowDialog(this);
@@ -36,27 +41,33 @@ public partial class MainWindow : Window
         });
         try
         {
-            var preparation = await Task.Run(() => viewModel.PrepareCopy(project.Id, progress));
+            var preparation = await Task.Run(() => restore
+                ? viewModel.PrepareRestore(project.Id, progress) : viewModel.PrepareCopy(project.Id, progress));
             showProgress = false;
             if (preparation.Failure is { } failure)
             {
-                details.Text = "Preparation failed. No backup files were changed.";
+                details.Text = "Preparation failed. No operation files were changed.";
                 summary.Text = $"{failure.Stage}: {failure.Path}: {failure.Message}";
             }
             else
             {
                 plan = preparation.Plan!;
-                var skip = new CheckBox { Content = "Do not ask again for Copy" };
-                if (viewModel.ConfirmCopy)
+                var skip = new CheckBox { Content = $"Do not ask again for {operation}" };
+                if (restore ? viewModel.ConfirmRestore : viewModel.ConfirmCopy)
                 {
-                    details.Text = $"Copy {plan.Entries.Count} file(s) and folder(s) for {project.Name}? Originals and extra backup files will be preserved.";
+                    details.Text = $"{operation} {plan.Entries.Count} file(s) and folder(s) for {project.Name}? " +
+                        (restore ? "Corresponding originals will be replaced. Backup and extra original files will be preserved."
+                            : "Originals and extra backup files will be preserved.");
                     bar.IsIndeterminate = false;
                     summary.Text = string.Join(Environment.NewLine, plan.Warnings.Select(warning => $"Warning: {warning.Path}: {warning.Message}"));
                     summary.Text += "\nDestinations:\n" + string.Join(Environment.NewLine,
                         plan.Entries.Select(entry => entry.Destination));
+                    if (restore)
+                        summary.Text += "\nFiles to overwrite:\n" + (plan.Overwrites!.Count == 0 ? "None."
+                            : string.Join(Environment.NewLine, plan.Overwrites));
                     content.Children.Insert(4, skip);
                     var decision = new TaskCompletionSource<bool>();
-                    var proceed = new Button { Content = "Copy" };
+                    var proceed = new Button { Content = operation };
                     var decline = new Button { Content = "Back" };
                     proceed.Click += (_, _) => decision.TrySetResult(true);
                     decline.Click += (_, _) => decision.TrySetResult(false);
@@ -77,10 +88,12 @@ public partial class MainWindow : Window
                 var disableConfirmation = skip.IsChecked == true;
                 executed = true;
                 showProgress = true;
-                var result = await Task.Run(() => viewModel.Copy(plan!, disableConfirmation, progress));
+                var result = await Task.Run(() => restore
+                    ? viewModel.Restore(plan!, disableConfirmation, progress) : viewModel.Copy(plan!, disableConfirmation, progress));
                 showProgress = false;
-                details.Text = result.Failure is not null ? "Copy failed. Files already written were not rolled back."
-                    : result.WrittenPaths.Count == 0 ? "No items processed." : result.Warnings.Count > 0 ? "Copy completed with warnings." : "Copy completed and verified.";
+                details.Text = result.Failure is not null ? $"{operation} failed. Files already written were not rolled back."
+                    : result.WrittenPaths.Count == 0 ? "No items processed." : result.Warnings.Count > 0
+                        ? $"{operation} completed with warnings." : $"{operation} completed and verified.";
                 summary.Text = $"Written paths (including potentially incomplete files): {result.WrittenPaths.Count}\nVerified files: {result.VerifiedFiles.Count}\n" +
                     string.Join(Environment.NewLine, result.Warnings.Select(warning => $"Warning: {warning.Path}: {warning.Message}")) +
                     (result.Failure is null ? "" : $"\nFailure — {result.Failure.Stage}: {result.Failure.Path}: {result.Failure.Message}") +
@@ -90,7 +103,7 @@ public partial class MainWindow : Window
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException
             or InvalidOperationException or NotSupportedException)
         {
-            details.Text = "Copy could not finish.";
+            details.Text = $"{operation} could not finish.";
             summary.Text = error.Message;
         }
         finally

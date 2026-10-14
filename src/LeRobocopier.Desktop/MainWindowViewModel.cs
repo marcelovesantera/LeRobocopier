@@ -33,9 +33,22 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
     public bool ConfirmMove => registry?.State.Confirmations.Move ?? true;
-    public bool ConfirmRestore => registry?.State.Confirmations.Restore ?? true;
+    public bool ConfirmRestore
+    {
+        get => registry?.State.Confirmations.Restore ?? true;
+        set
+        {
+            try { registry?.SetRestoreConfirmation(value); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                Message = error.Message;
+            }
+            Notify();
+        }
+    }
     public bool CanCreate => registry is not null && !IsBusy;
     public bool CanCopy => CanCreate && Selected is not null;
+    public bool CanRestore => CanCopy;
     public bool IsBusy
     {
         get => isBusy;
@@ -45,6 +58,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             Notify();
             Notify(nameof(CanCreate));
             Notify(nameof(CanCopy));
+            Notify(nameof(CanRestore));
         }
     }
     public bool ShowProjects => panel == MainPanel.Projects;
@@ -67,6 +81,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             Notify(nameof(Items));
             Notify(nameof(ProjectName));
             Notify(nameof(CanCopy));
+            Notify(nameof(CanRestore));
         }
     }
     public string Selection => Selected is null ? "Select a project." : $"Selected project: {Selected.Name}";
@@ -134,9 +149,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public CopyResult Copy(CopyPlan plan, bool disableConfirmation, IProgress<OperationProgress> progress) =>
         registry!.Copy(plan, disableConfirmation, progress);
 
+    public CopyPreparation PrepareRestore(Guid projectId, IProgress<OperationProgress> progress) =>
+        registry!.PrepareRestore(projectId, progress);
+
+    public CopyResult Restore(CopyPlan plan, bool disableConfirmation, IProgress<OperationProgress> progress) =>
+        registry!.Restore(plan, disableConfirmation, progress);
+
     public void AbandonCopy(CopyPlan plan) => registry!.AbandonCopy(plan);
 
-    public void RefreshConfirmation() => Notify(nameof(ConfirmCopy));
+    public void RefreshConfirmation()
+    {
+        Notify(nameof(ConfirmCopy));
+        Notify(nameof(ConfirmRestore));
+    }
 
     public void Dispose() => registry?.Dispose();
 
