@@ -189,6 +189,39 @@ public partial class MainWindow : Window
             (DataContext as MainWindowViewModel)?.RemoveItem(item);
     }
 
+    private async void Deactivate_Click(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCopy) return;
+        var project = viewModel.Selected!;
+        var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        var content = new StackPanel { Spacing = 18, Margin = new Avalonia.Thickness(24) };
+        content.Children.Add(new TextBlock
+        {
+            Text = $"Deactivate {project.Name}? It will leave the project list. Registered items, its reserved name and backups will be preserved. You can reactivate it in Settings.",
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        });
+        content.Children.Add(choices);
+        var modal = new Window
+        {
+            Title = "Deactivate project", Width = 520, SizeToContent = SizeToContent.Height,
+            CanResize = false, WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = content
+        };
+        var confirm = new Button { Content = "Deactivate" };
+        var back = new Button { Content = "Back" };
+        confirm.Click += (_, _) => modal.Close(true);
+        back.Click += (_, _) => modal.Close(false);
+        choices.Children.Add(confirm);
+        choices.Children.Add(back);
+        // Capture the ID before the modal; closing or going back never changes the registry.
+        if (await modal.ShowDialog<bool>(this)) viewModel.SetProjectActive(project.Id, false);
+    }
+
+    private void Reactivate_Click(object? sender, RoutedEventArgs args)
+    {
+        if (sender is Button { DataContext: Project project })
+            (DataContext as MainWindowViewModel)?.SetProjectActive(project.Id, true);
+    }
+
     private async void AddFiles_Click(object? sender, RoutedEventArgs args) =>
         await SelectItems(ItemType.File);
 

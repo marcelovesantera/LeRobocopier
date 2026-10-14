@@ -108,6 +108,21 @@ public sealed partial class ProjectRegistry : IDisposable
         }
     }
 
+    public Project SetProjectActive(Guid projectId, bool active)
+    {
+        lock (gate)
+        {
+            EnsureIdle();
+            var project = State.Projects.FirstOrDefault(current => current.Id == projectId)
+                ?? throw new ArgumentException("The project does not exist.", nameof(projectId));
+            if (project.Active == active) return project;
+            var updated = project with { Active = active };
+            var projects = Array.AsReadOnly(State.Projects.Select(current => current.Id == projectId ? updated : current).ToArray());
+            Save(State with { Projects = projects });
+            return updated;
+        }
+    }
+
     public void SetCopyConfirmation(bool enabled)
     {
         lock (gate)

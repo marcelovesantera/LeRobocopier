@@ -6,6 +6,7 @@ Implemented features:
 
 - Create projects using New project, with automatic saving.
 - Active project cards with single selection.
+- Deactivate a project after confirmation, preserving its identity, registered items and backups; reactivate it in Settings.
 - Open project editor with native file and folder pickers, item types and full paths.
 - Add and remove items with automatic saving; removal preserves original files and backups.
 - Reject duplicate items, overlapping folders and selections that match, contain or are inside the backup root.

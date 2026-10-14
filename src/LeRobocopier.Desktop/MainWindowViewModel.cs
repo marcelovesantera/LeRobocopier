@@ -18,6 +18,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public event PropertyChangedEventHandler? PropertyChanged;
     public IReadOnlyList<Project> Projects => registry?.State.Projects.Where(project => project.Active).ToArray()
         ?? Array.Empty<Project>();
+    public IReadOnlyList<Project> InactiveProjects => registry?.State.Projects.Where(project => !project.Active).ToArray()
+        ?? Array.Empty<Project>();
+    public bool NoInactiveProjects => InactiveProjects.Count == 0;
     public string BackupRoot => registry?.State.BackupRoot ?? "Unavailable";
     public bool ConfirmCopy
     {
@@ -87,7 +90,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         get => selected;
         set
         {
-            selected = value;
+            // Keep an active selection on repeated clicks; allow it to clear after deactivation.
+            selected = value ?? Projects.FirstOrDefault(project => project.Id == selected?.Id);
             Notify();
             Notify(nameof(Selection));
             Notify(nameof(Items));
@@ -155,6 +159,25 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public void ReportError(string error) => Message = error;
 
+    public void SetProjectActive(Guid projectId, bool active)
+    {
+        if (registry is null) return;
+        try
+        {
+            var updated = registry.SetProjectActive(projectId, active);
+            UpdateProject(updated);
+            Notify(nameof(InactiveProjects));
+            Notify(nameof(NoInactiveProjects));
+            Notify(nameof(NoProjects));
+            Message = active ? "Project reactivated." : "Project deactivated. Registered items and backups were preserved.";
+            if (!active && ShowEditor && Selected is null) Navigate(MainPanel.Projects);
+        }
+        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            Message = error.Message;
+        }
+    }
+
     public CopyPreparation PrepareCopy(Guid projectId, IProgress<OperationProgress> progress) =>
         registry!.PrepareCopy(projectId, progress);
 
@@ -189,8 +212,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         var selectedId = Selected?.Id;
         // The ListBox may clear selection when ItemsSource changes; restore it using the stable ID.
         Notify(nameof(Projects));
-        Selected = selectedId == project.Id ? project :
-            registry!.State.Projects.FirstOrDefault(current => current.Id == selectedId);
+        Selected = selectedId == project.Id && project.Active ? project :
+            registry!.State.Projects.FirstOrDefault(current => current.Id == selectedId && current.Active);
     }
 
     public void Create()
