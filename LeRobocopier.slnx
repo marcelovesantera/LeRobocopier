@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/LeRobocopier.Core/LeRobocopier.Core.csproj" />
+  <Project Path="src/LeRobocopier.Desktop/LeRobocopier.Desktop.csproj" />
+  <Project Path="tests/LeRobocopier.Core.Tests/LeRobocopier.Core.Tests.csproj" />
+</Solution>

@@ -1,0 +1,71 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:LeRobocopier.Desktop"
+        xmlns:core="using:LeRobocopier.Core"
+        x:Class="LeRobocopier.Desktop.MainWindow"
+        x:DataType="local:MainWindowViewModel"
+        Title="Le Robocopier" Width="1000" Height="680" MinWidth="680" MinHeight="480">
+  <Grid ColumnDefinitions="180,*">
+    <Border Background="#EFF2F5" Padding="16">
+      <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="12">
+          <Button Click="Configuracoes_Click" ToolTip.Tip="Configurações" AutomationProperties.Name="Configurações">
+            <PathIcon Width="20" Height="20" Data="M3,2 L17,2 L17,5 L3,5 Z M3,9 L17,9 L17,12 L3,12 Z M3,16 L17,16 L17,19 L3,19 Z" />
+          </Button>
+          <Button Click="Novo_Click" IsEnabled="{Binding PodeCriar}" ToolTip.Tip="Novo projeto" AutomationProperties.Name="Novo projeto">
+            <PathIcon Width="20" Height="20" Data="M9,1 L12,1 L12,9 L20,9 L20,12 L12,12 L12,20 L9,20 L9,12 L1,12 L1,9 L9,9 Z" />
+          </Button>
+        </StackPanel>
+        <StackPanel Spacing="14">
+          <TextBlock Text="Le Robocopier" FontWeight="Bold" FontSize="16" Margin="0,0,0,20" />
+          <Button Content="Copiar" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Disponível em uma próxima entrega" />
+          <Button Content="Mover" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Disponível em uma próxima entrega" />
+          <Button Content="Restaurar" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Disponível em uma próxima entrega" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+    <Grid Grid.Column="1" RowDefinitions="*,Auto" Margin="28">
+      <Grid IsVisible="{Binding MostrarProjetos}" RowDefinitions="Auto,Auto,*">
+        <TextBlock Text="Projetos" FontSize="28" FontWeight="SemiBold" />
+        <StackPanel Grid.Row="1" Margin="0,16,0,16" Spacing="8">
+          <TextBlock Text="{Binding Selecao}" TextWrapping="Wrap" />
+          <TextBlock Text="Use Novo para cadastrar seu primeiro projeto." IsVisible="{Binding SemProjetos}" TextWrapping="Wrap" />
+        </StackPanel>
+        <ListBox Grid.Row="2" ItemsSource="{Binding Projetos}" SelectedItem="{Binding Selecionado, Mode=TwoWay}" SelectionMode="Single,AlwaysSelected">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="core:Projeto">
+              <Border BorderBrush="#CAD2DC" BorderThickness="1" CornerRadius="8" Padding="20" Margin="0,4">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="{Binding Nome}" FontSize="20" TextWrapping="Wrap" />
+                  <TextBlock Text="Nenhum item configurado" Foreground="#536071" />
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+      <ScrollViewer IsVisible="{Binding MostrarConfiguracoes}">
+        <StackPanel Spacing="18">
+          <TextBlock Text="Configurações" FontSize="28" FontWeight="SemiBold" />
+          <TextBlock Text="Base de backup" FontWeight="Bold" />
+          <TextBlock Text="{Binding BaseBackup}" TextWrapping="Wrap" />
+          <TextBlock Text="A alteração da base e das confirmações será disponibilizada com os processos." TextWrapping="Wrap" />
+          <CheckBox Content="Confirmar Copiar" IsChecked="{Binding ConfirmarCopiar, Mode=OneWay}" IsEnabled="False" />
+          <CheckBox Content="Confirmar Mover" IsChecked="{Binding ConfirmarMover, Mode=OneWay}" IsEnabled="False" />
+          <CheckBox Content="Confirmar Restaurar" IsChecked="{Binding ConfirmarRestaurar, Mode=OneWay}" IsEnabled="False" />
+          <Button Content="Voltar aos projetos" Click="Projetos_Click" />
+        </StackPanel>
+      </ScrollViewer>
+      <StackPanel IsVisible="{Binding MostrarNovo}" Spacing="18">
+        <TextBlock Text="Novo projeto" FontSize="28" FontWeight="SemiBold" />
+        <TextBlock Text="Nome do projeto" />
+        <TextBox Text="{Binding NomeNovo, Mode=TwoWay}" Watermark="Ex.: Documentos" AutomationProperties.Name="Nome do projeto" />
+        <StackPanel Orientation="Horizontal" Spacing="12">
+          <Button Content="Criar projeto" Click="Criar_Click" IsEnabled="{Binding PodeCriar}" />
+          <Button Content="Voltar" Click="Projetos_Click" />
+        </StackPanel>
+      </StackPanel>
+      <TextBlock Grid.Row="1" Text="{Binding Mensagem}" TextWrapping="Wrap" Margin="0,18,0,0" />
+    </Grid>
+  </Grid>
+</Window>
