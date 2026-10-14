@@ -118,6 +118,8 @@ public sealed class ProjectRegistryTests : IDisposable
 
         Assert.Equal(bytes, File.ReadAllBytes(SettingsFile));
         Assert.Single(Directory.GetFiles(directory, "*.xml"));
+        using var releasedLock = new FileStream(SettingsFile + ".lock", FileMode.Open,
+            FileAccess.ReadWrite, FileShare.None);
     }
 
     [Fact]
@@ -391,6 +393,35 @@ public sealed class ProjectRegistryTests : IDisposable
         Assert.Throws<InvalidDataException>(() => new ProjectRegistry(SettingsFile, BackupRoot));
 
         Assert.Equal(bytes, File.ReadAllBytes(SettingsFile));
+    }
+
+    [Fact]
+    public void Copy_WithFolder_PreservesBytesTimestampsAndEmptyDirectories()
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(directory, "Source")).FullName;
+        var empty = Directory.CreateDirectory(Path.Combine(folder, "Empty")).FullName;
+        var file = Path.Combine(folder, "data.txt");
+        File.WriteAllText(file, "original bytes");
+        var modified = new DateTime(2025, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        Directory.SetLastWriteTimeUtc(empty, modified);
+        Directory.SetLastWriteTimeUtc(folder, modified);
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        var project = registry.Create("Project");
+        registry.AddItems(project.Id, [new(ItemType.Folder, folder)]);
+
+        var preparation = registry.PrepareCopy(project.Id);
+        Assert.Null(preparation.Failure);
+        var result = registry.Copy(Assert.IsType<CopyPlan>(preparation.Plan));
+
+        Assert.Null(result.Failure);
+        Assert.True(result.Success);
+        Assert.Single(result.VerifiedFiles);
+        var copiedFolder = preparation.Plan!.Entries.Single(entry => entry.Source == folder).Destination;
+        Assert.Equal(File.ReadAllBytes(file), File.ReadAllBytes(Path.Combine(copiedFolder, "data.txt")));
+        Assert.True(Directory.Exists(Path.Combine(copiedFolder, "Empty")));
+        Assert.Equal(modified, Directory.GetLastWriteTimeUtc(copiedFolder));
+        Assert.Equal(modified, Directory.GetLastWriteTimeUtc(Path.Combine(copiedFolder, "Empty")));
+        Assert.Equal("original bytes", File.ReadAllText(file));
     }
 
     public void Dispose()

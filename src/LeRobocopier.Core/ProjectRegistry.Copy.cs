@@ -255,7 +255,10 @@ public sealed partial class ProjectRegistry
                 current = entry.Destination;
                 ValidateCopyPath(entry.Source, entry.Type, false);
                 ValidateCopyPath(entry.Destination, entry.Type, false);
-                File.SetLastWriteTimeUtc(entry.Destination, File.GetLastWriteTimeUtc(entry.Source));
+                if (entry.Type == ItemType.Folder)
+                    Directory.SetLastWriteTimeUtc(entry.Destination, Directory.GetLastWriteTimeUtc(entry.Source));
+                else
+                    File.SetLastWriteTimeUtc(entry.Destination, File.GetLastWriteTimeUtc(entry.Source));
                 var common = FileAttributes.ReadOnly | FileAttributes.Hidden | FileAttributes.System | FileAttributes.Archive;
                 File.SetAttributes(entry.Destination, (File.GetAttributes(entry.Destination) & ~common) |
                     (File.GetAttributes(entry.Source) & common));

@@ -25,7 +25,7 @@ if ([string]::IsNullOrWhiteSpace($CompilerPath)) {
     $CompilerPath = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
 }
 $compiler = Get-Item -LiteralPath $CompilerPath
-if ($compiler.PSIsContainer -or $compiler.VersionInfo.ProductVersion -notmatch '^6\.7\.3(?:\D|$)') {
+if ($compiler.PSIsContainer) {
     throw "Install Inno Setup $innoVersion and specify its ISCC.exe with -CompilerPath."
 }
 $dotnet = (Get-Command dotnet -CommandType Application).Source
@@ -41,6 +41,22 @@ try {
     $outputDirectory = Join-Path $PSScriptRoot ("obj\windows-installer\$Version\" + [guid]::NewGuid().ToString('N'))
     $publishDirectory = Join-Path $outputDirectory 'publish'
     [System.IO.Directory]::CreateDirectory($outputDirectory) | Out-Null
+    # Official ISCC binaries have 0.0.0.0 file metadata; validate the engine and preprocessor instead.
+    $compilerProbe = @"
+#if Ver != 0x06070300
+  #error This procedure requires Inno Setup 6.7.3.
+#endif
+[Setup]
+AppName=Compiler version probe
+AppVersion=1
+DefaultDirName={tmp}\CompilerVersionProbe
+Output=no
+OutputDir=$outputDirectory
+"@
+    $compilerOutput = $compilerProbe | & $compiler.FullName -
+    if ($LASTEXITCODE -ne 0 -or $compilerOutput -notcontains "Compiler engine version: Inno Setup $innoVersion") {
+        throw "Install Inno Setup $innoVersion with its preprocessor and specify its ISCC.exe with -CompilerPath."
+    }
     $project = Join-Path $PSScriptRoot 'src\LeRobocopier.Desktop\LeRobocopier.Desktop.csproj'
     $publishArguments = @(
         'publish', $project, '--configuration', 'Release', '--framework', 'net10.0',

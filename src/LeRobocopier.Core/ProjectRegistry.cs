@@ -48,7 +48,7 @@ public sealed partial class ProjectRegistry : IDisposable
         {
             State = initial;
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or XmlException
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or XmlException
             or FormatException or InvalidOperationException or ArgumentException)
         {
             instanceLock.Dispose();
