@@ -13,6 +13,7 @@ public sealed partial class ProjectRegistry : IDisposable
     private Guid? executionId;
     private bool disposed;
     public bool RequiresRenameRecovery { get; private set; }
+    public bool RequiresConfigurationReload { get; private set; }
 
     public Configuration State { get; private set; }
 
@@ -165,7 +166,7 @@ public sealed partial class ProjectRegistry : IDisposable
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
                 {
-                    try { ReloadAfterRenameFailure(); }
+                    try { ReloadSavedConfiguration(); }
                     catch (Exception recoveryError)
                     {
                         RequiresRenameRecovery = true;
@@ -218,7 +219,7 @@ public sealed partial class ProjectRegistry : IDisposable
                 try
                 {
                     // Inspect the persisted decision, including a replacement that succeeded before reporting an error.
-                    ReloadAfterRenameFailure();
+                    ReloadSavedConfiguration();
                     RecoverRename();
                 }
                 catch (Exception recoveryError)
@@ -230,7 +231,7 @@ public sealed partial class ProjectRegistry : IDisposable
         }
     }
 
-    private void ReloadAfterRenameFailure()
+    private void ReloadSavedConfiguration()
     {
         using var stream = File.OpenRead(file);
         using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit });
@@ -335,6 +336,7 @@ public sealed partial class ProjectRegistry : IDisposable
     private void EnsureIdle()
     {
         ObjectDisposedException.ThrowIf(disposed, this);
+        if (RequiresConfigurationReload) throw new InvalidOperationException("The saved configuration could not be confirmed. Restart the application before making changes.");
         if (RequiresRenameRecovery) throw new InvalidOperationException("A project rename needs recovery. Restart the application before making changes.");
         if (executionId is not null) throw new InvalidOperationException("An operation is already in progress. Changes are blocked until it finishes.");
     }
@@ -435,7 +437,7 @@ public sealed partial class ProjectRegistry : IDisposable
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            throw new IOException("Could not save the project. The previous registry was preserved.", error);
+            throw new IOException("Could not save the configuration. " + error.Message, error);
         }
         finally
         {

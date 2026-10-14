@@ -53,7 +53,8 @@
           <TextBlock Text="Settings" FontSize="28" FontWeight="SemiBold" />
           <TextBlock Text="Backup root" FontWeight="Bold" />
           <TextBlock Text="{Binding BackupRoot}" TextWrapping="Wrap" />
-          <TextBlock Text="Each confirmation preference applies to all projects. The backup root cannot be changed yet." TextWrapping="Wrap" />
+          <Button Content="Change backup root" Click="ChangeBackupRoot_Click" IsEnabled="{Binding CanCreate}" />
+          <TextBlock Text="Changing the backup root migrates complete backups of active and inactive projects and always requires confirmation. Each process preference below applies to all projects." TextWrapping="Wrap" />
           <CheckBox Content="Confirm Copy" IsChecked="{Binding ConfirmCopy, Mode=TwoWay}" />
           <CheckBox Content="Confirm Move" IsChecked="{Binding ConfirmMove, Mode=TwoWay}" />
           <CheckBox Content="Confirm Restore" IsChecked="{Binding ConfirmRestore, Mode=TwoWay}" />

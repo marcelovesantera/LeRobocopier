@@ -62,7 +62,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             Notify();
         }
     }
-    public bool CanCreate => registry is not null && !registry.RequiresRenameRecovery && !IsBusy;
+    public bool CanCreate => registry is not null && !registry.RequiresRenameRecovery && !registry.RequiresConfigurationReload && !IsBusy;
     public bool CanCopy => CanCreate && Selected is not null;
     public bool CanRestore => CanCopy;
     public bool IsBusy
@@ -220,6 +220,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public CopyResult Move(CopyPlan plan, bool disableConfirmation, IProgress<OperationProgress> progress) =>
         registry!.Move(plan, disableConfirmation, progress);
 
+    public CopyPreparation PrepareMigration(string backupRoot, IProgress<OperationProgress> progress) =>
+        registry!.PrepareMigration(backupRoot, progress);
+
+    public CopyResult Migrate(CopyPlan plan, IProgress<OperationProgress> progress) =>
+        registry!.Migrate(plan, progress);
+
     public void AbandonCopy(CopyPlan plan) => registry!.AbandonCopy(plan);
 
     public void RefreshConfirmation()
@@ -227,6 +233,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         Notify(nameof(ConfirmCopy));
         Notify(nameof(ConfirmRestore));
         Notify(nameof(ConfirmMove));
+        Notify(nameof(BackupRoot));
     }
 
     public void Dispose() => registry?.Dispose();
