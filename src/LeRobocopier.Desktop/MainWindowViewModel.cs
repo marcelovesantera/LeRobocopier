@@ -32,7 +32,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             Notify();
         }
     }
-    public bool ConfirmMove => registry?.State.Confirmations.Move ?? true;
+    public bool ConfirmMove
+    {
+        get => registry?.State.Confirmations.Move ?? true;
+        set
+        {
+            try { registry?.SetMoveConfirmation(value); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                Message = error.Message;
+            }
+            Notify();
+        }
+    }
     public bool ConfirmRestore
     {
         get => registry?.State.Confirmations.Restore ?? true;
@@ -155,12 +167,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public CopyResult Restore(CopyPlan plan, bool disableConfirmation, IProgress<OperationProgress> progress) =>
         registry!.Restore(plan, disableConfirmation, progress);
 
+    public CopyPreparation PrepareMove(Guid projectId, IProgress<OperationProgress> progress) =>
+        registry!.PrepareMove(projectId, progress);
+
+    public CopyResult Move(CopyPlan plan, bool disableConfirmation, IProgress<OperationProgress> progress) =>
+        registry!.Move(plan, disableConfirmation, progress);
+
     public void AbandonCopy(CopyPlan plan) => registry!.AbandonCopy(plan);
 
     public void RefreshConfirmation()
     {
         Notify(nameof(ConfirmCopy));
         Notify(nameof(ConfirmRestore));
+        Notify(nameof(ConfirmMove));
     }
 
     public void Dispose() => registry?.Dispose();

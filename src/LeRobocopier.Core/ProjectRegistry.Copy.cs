@@ -7,12 +7,15 @@ namespace LeRobocopier.Core;
 public sealed partial class ProjectRegistry
 {
     public CopyPreparation PrepareCopy(Guid projectId, IProgress<OperationProgress>? progress = null)
-        => PrepareCopy(projectId, false, progress);
+        => PrepareCopy(projectId, false, false, progress);
 
     public CopyPreparation PrepareRestore(Guid projectId, IProgress<OperationProgress>? progress = null)
-        => PrepareCopy(projectId, true, progress);
+        => PrepareCopy(projectId, true, false, progress);
 
-    private CopyPreparation PrepareCopy(Guid projectId, bool restore, IProgress<OperationProgress>? progress)
+    public CopyPreparation PrepareMove(Guid projectId, IProgress<OperationProgress>? progress = null)
+        => PrepareCopy(projectId, false, true, progress);
+
+    private CopyPreparation PrepareCopy(Guid projectId, bool restore, bool move, IProgress<OperationProgress>? progress)
     {
         Guid id;
         lock (gate)
@@ -23,11 +26,12 @@ public sealed partial class ProjectRegistry
             executionId = id;
             copyProjectId = projectId;
             restoreOperation = restore;
+            moveOperation = move;
             inventoryPath = null;
         }
         try
         {
-            var plan = InventoryCopy(id, projectId, restore, progress);
+            var plan = InventoryCopy(id, projectId, restore, move, progress);
             preparedOverwrites = plan.Overwrites ?? Array.Empty<string>();
             return new CopyPreparation(plan, null);
         }
@@ -49,18 +53,21 @@ public sealed partial class ProjectRegistry
     }
 
     public CopyResult Copy(CopyPlan plan, bool disableConfirmation = false, IProgress<OperationProgress>? progress = null)
-        => Copy(plan, false, disableConfirmation, progress);
+        => Copy(plan, false, false, disableConfirmation, progress);
 
     public CopyResult Restore(CopyPlan plan, bool disableConfirmation = false, IProgress<OperationProgress>? progress = null)
-        => Copy(plan, true, disableConfirmation, progress);
+        => Copy(plan, true, false, disableConfirmation, progress);
 
-    private CopyResult Copy(CopyPlan plan, bool restore, bool disableConfirmation, IProgress<OperationProgress>? progress)
+    public CopyResult Move(CopyPlan plan, bool disableConfirmation = false, IProgress<OperationProgress>? progress = null)
+        => Copy(plan, false, true, disableConfirmation, progress);
+
+    private CopyResult Copy(CopyPlan plan, bool restore, bool move, bool disableConfirmation, IProgress<OperationProgress>? progress)
     {
         lock (gate)
         {
             if (executionId != plan.ExecutionId) throw new InvalidOperationException("This operation is no longer active.");
             if (copyProjectId != plan.ProjectId) throw new InvalidOperationException("The prepared project cannot be changed.");
-            if (restoreOperation != restore || plan.IsRestore != restore)
+            if (restoreOperation != restore || plan.IsRestore != restore || moveOperation != move || plan.IsMove != move)
                 throw new InvalidOperationException("The prepared operation cannot be changed.");
             // Claim the prepared operation once, including against callers using the same plan.
             if (copyRunning) throw new InvalidOperationException("This operation is already running.");
@@ -69,6 +76,9 @@ public sealed partial class ProjectRegistry
         var written = new List<string>();
         var verified = new List<string>();
         var warnings = new List<OperationIssue>();
+        var removed = new List<string>();
+        var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var remaining = new HashSet<string>(pathComparer);
         var stage = OperationStage.Preparing;
         var current = "";
         var restoreConfirmationRequired = restore && State.Confirmations.Restore;
@@ -80,12 +90,14 @@ public sealed partial class ProjectRegistry
                 current = file;
                 Save(State with { Confirmations = restore
                     ? State.Confirmations with { Restore = false }
+                    : move ? State.Confirmations with { Move = false }
                     : State.Confirmations with { Copy = false } });
             }
             // Confirmation may have taken arbitrarily long; the old inventory authorizes no writes.
-            var inventory = InventoryCopy(plan.ExecutionId, plan.ProjectId, restore, progress);
+            var inventoriedFiles = move ? new Dictionary<string, (long Length, byte[] Hash)>(pathComparer) : null;
+            var inventory = InventoryCopy(plan.ExecutionId, plan.ProjectId, restore, move, progress, inventoriedFiles);
+            if (move) remaining.UnionWith(inventory.Entries.Select(entry => entry.Source));
             warnings.AddRange(inventory.Warnings);
-            var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
             var confirmedOverwrites = new HashSet<string>(preparedOverwrites, pathComparer);
             var newOverwrite = restoreConfirmationRequired
                 ? inventory.Overwrites!.FirstOrDefault(path => !confirmedOverwrites.Contains(path)) : null;
@@ -171,6 +183,14 @@ public sealed partial class ProjectRegistry
                         catch (UnauthorizedAccessException) { }
                     }
                     expected.Add(entry.Destination, (sourceLength, hash.GetHashAndReset()));
+                    if (move)
+                    {
+                        var inventoried = inventoriedFiles![entry.Source];
+                        var copied = expected[entry.Destination];
+                        if (copied.Length != inventoried.Length ||
+                            !CryptographicOperations.FixedTimeEquals(copied.Hash, inventoried.Hash))
+                            throw new IOException("The source changed after inventory. No originals will be removed.");
+                    }
                 }
                 completed++;
                 progress?.Report(new OperationProgress(stage, current, completed, total));
@@ -210,14 +230,53 @@ public sealed partial class ProjectRegistry
                     File.SetUnixFileMode(entry.Destination, File.GetUnixFileMode(entry.Source));
                 progress?.Report(new OperationProgress(stage, current, ++completed, total));
             }
+            if (move)
+            {
+                stage = OperationStage.Removing;
+                // Only the fresh, globally verified inventory can authorize removal.
+                var authorized = inventory.Entries.ToDictionary(entry => entry.Source, pathComparer);
+                var children = inventory.Entries.GroupBy(entry => Path.GetDirectoryName(entry.Source)!, pathComparer)
+                    .ToDictionary(group => group.Key,
+                        group => new HashSet<string>(group.Select(entry => entry.Source), pathComparer), pathComparer);
+                completed = 0;
+                // Check every source and backup again before the first destructive action.
+                foreach (var entry in inventory.Entries)
+                {
+                    current = entry.Source;
+                    progress?.Report(new OperationProgress(stage, current, 0, total));
+                    ValidateMoveEntry(entry, expected, authorized, children, remaining);
+                }
+                // Reverse inventory order removes children before their parents, never recursively.
+                foreach (var entry in inventory.Entries.Reverse())
+                {
+                    current = entry.Source;
+                    progress?.Report(new OperationProgress(stage, current, completed, total));
+                    ValidateMoveEntry(entry, expected, authorized, children, remaining);
+                    if (entry.Type == ItemType.File)
+                        File.Delete(entry.Source);
+                    else
+                        Directory.Delete(entry.Source, false);
+                    removed.Add(entry.Source);
+                    remaining.Remove(entry.Source);
+                    if (children.TryGetValue(Path.GetDirectoryName(entry.Source)!, out var siblings))
+                        siblings.Remove(entry.Source);
+                    progress?.Report(new OperationProgress(stage, current, ++completed, total));
+                }
+            }
             progress?.Report(new OperationProgress(OperationStage.Completed, "", total, total));
-            return new CopyResult(written.AsReadOnly(), verified.AsReadOnly(), warnings.AsReadOnly(), null);
+            return new CopyResult(written.AsReadOnly(), verified.AsReadOnly(), warnings.AsReadOnly(), null)
+            {
+                RemovedPaths = removed.AsReadOnly(), RemainingPaths = Array.AsReadOnly(remaining.ToArray())
+            };
         }
         catch (Exception error)
         {
             if (stage == OperationStage.Preparing && inventoryPath is not null) current = inventoryPath;
             return new CopyResult(written.AsReadOnly(), verified.AsReadOnly(), warnings.AsReadOnly(),
-                new OperationIssue(stage, current, error.Message));
+                new OperationIssue(stage, current, error.Message))
+            {
+                RemovedPaths = removed.AsReadOnly(), RemainingPaths = Array.AsReadOnly(remaining.ToArray())
+            };
         }
         finally
         {
@@ -233,9 +292,11 @@ public sealed partial class ProjectRegistry
     private Guid copyProjectId;
     private string? inventoryPath;
     private bool restoreOperation;
+    private bool moveOperation;
     private IReadOnlyList<string> preparedOverwrites = Array.Empty<string>();
 
-    private CopyPlan InventoryCopy(Guid id, Guid projectId, bool restore, IProgress<OperationProgress>? progress)
+    private CopyPlan InventoryCopy(Guid id, Guid projectId, bool restore, bool move, IProgress<OperationProgress>? progress,
+        Dictionary<string, (long Length, byte[] Hash)>? inventoriedFiles = null)
     {
         var project = GetProject(projectId);
         var entries = new List<CopyEntry>();
@@ -292,7 +353,11 @@ public sealed partial class ProjectRegistry
                         128 * 1024, FileOptions.SequentialScan);
                     if (OperatingSystem.IsWindows() && File.Exists(destination) && SameWindowsFile(readable, destination))
                         throw new IOException($"The destination is a hard link to the source: {destination}");
-                    SHA256.HashData(readable);
+                    var length = readable.Length;
+                    var hash = SHA256.HashData(readable);
+                    if (move && readable.Length != length)
+                        throw new IOException("The source size changed during inventory.");
+                    inventoriedFiles?.Add(source, (length, hash));
                 }
                 if (item.Type == ItemType.Folder)
                 {
@@ -307,7 +372,40 @@ public sealed partial class ProjectRegistry
                 }
             }
         }
-        return new CopyPlan(id, projectId, entries.AsReadOnly(), warnings.AsReadOnly(), restore, overwrites.AsReadOnly());
+        return new CopyPlan(id, projectId, entries.AsReadOnly(), warnings.AsReadOnly(), restore, overwrites.AsReadOnly(), move);
+    }
+
+    private static void ValidateMoveEntry(CopyEntry entry, Dictionary<string, (long Length, byte[] Hash)> expected,
+        Dictionary<string, CopyEntry> authorized, Dictionary<string, HashSet<string>> children, HashSet<string> remaining)
+    {
+        ValidateCopyPath(entry.Source, entry.Type, false);
+        ValidateCopyPath(entry.Destination, entry.Type, false);
+        if (entry.Type == ItemType.File)
+        {
+            var expectedFile = expected[entry.Destination];
+            using var source = File.OpenRead(entry.Source);
+            using var backup = File.OpenRead(entry.Destination);
+            if (source.Length != expectedFile.Length || backup.Length != expectedFile.Length ||
+                !CryptographicOperations.FixedTimeEquals(SHA256.HashData(source), expectedFile.Hash) ||
+                !CryptographicOperations.FixedTimeEquals(SHA256.HashData(backup), expectedFile.Hash))
+                throw new IOException("The source or verified backup changed. Removal stopped.");
+        }
+        // Only selected folders are checked; unrelated siblings of individually selected files are preserved.
+        for (var folder = entry.Type == ItemType.Folder ? entry.Source : Path.GetDirectoryName(entry.Source);
+            folder is not null && authorized.TryGetValue(folder, out var folderEntry) && folderEntry.Type == ItemType.Folder;
+            folder = Path.GetDirectoryName(folder))
+        {
+            ValidateCopyPath(folder, ItemType.Folder, false);
+            var actual = new HashSet<string>(Directory.EnumerateFileSystemEntries(folder).Select(NormalizePath),
+                remaining.Comparer);
+            var inventoried = children.TryGetValue(folder, out var known) ? known : new HashSet<string>(remaining.Comparer);
+            remaining.UnionWith(actual.Except(inventoried, remaining.Comparer));
+            if (!actual.SetEquals(inventoried))
+                throw new IOException($"The folder contents changed after inventory: {folder}. Removal stopped.");
+        }
+        // Hashing and enumeration take time; reject newly replaced path components before use.
+        ValidateCopyPath(entry.Source, entry.Type, false);
+        ValidateCopyPath(entry.Destination, entry.Type, false);
     }
 
     private static void ValidateCopyPath(string path, ItemType type, bool allowMissing)

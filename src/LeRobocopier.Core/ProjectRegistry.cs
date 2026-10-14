@@ -126,6 +126,15 @@ public sealed partial class ProjectRegistry : IDisposable
         }
     }
 
+    public void SetMoveConfirmation(bool enabled)
+    {
+        lock (gate)
+        {
+            EnsureIdle();
+            Save(State with { Confirmations = State.Confirmations with { Move = enabled } });
+        }
+    }
+
     private void EnsureIdle()
     {
         ObjectDisposedException.ThrowIf(disposed, this);

@@ -19,7 +19,7 @@
         <StackPanel Spacing="14">
           <TextBlock Text="Le Robocopier" FontWeight="Bold" FontSize="16" Margin="0,0,0,20" />
           <Button Content="Copy" Click="Copy_Click" IsEnabled="{Binding CanCopy}" HorizontalAlignment="Stretch" />
-          <Button Content="Move" IsEnabled="False" HorizontalAlignment="Stretch" ToolTip.Tip="Available in a future release" />
+          <Button Content="Move" Click="Move_Click" IsEnabled="{Binding CanCopy}" HorizontalAlignment="Stretch" />
           <Button Content="Restore" Click="Restore_Click" IsEnabled="{Binding CanRestore}" HorizontalAlignment="Stretch" />
         </StackPanel>
       </DockPanel>
@@ -55,7 +55,7 @@
           <TextBlock Text="{Binding BackupRoot}" TextWrapping="Wrap" />
           <TextBlock Text="Each confirmation preference applies to all projects. The backup root cannot be changed yet." TextWrapping="Wrap" />
           <CheckBox Content="Confirm Copy" IsChecked="{Binding ConfirmCopy, Mode=TwoWay}" />
-          <CheckBox Content="Confirm Move" IsChecked="{Binding ConfirmMove, Mode=OneWay}" IsEnabled="False" />
+          <CheckBox Content="Confirm Move" IsChecked="{Binding ConfirmMove, Mode=TwoWay}" />
           <CheckBox Content="Confirm Restore" IsChecked="{Binding ConfirmRestore, Mode=TwoWay}" />
           <Button Content="Back to projects" Click="Projects_Click" />
         </StackPanel>
