@@ -12,6 +12,7 @@ public sealed partial class ProjectRegistry : IDisposable
     private readonly FileStream instanceLock;
     private Guid? executionId;
     private bool disposed;
+    public bool RequiresRenameRecovery { get; private set; }
 
     public Configuration State { get; private set; }
 
@@ -51,6 +52,12 @@ public sealed partial class ProjectRegistry : IDisposable
         {
             instanceLock.Dispose();
             throw new InvalidDataException($"Could not read {this.file}. The existing file was preserved.", error);
+        }
+        try { RecoverRename(); }
+        catch (Exception error)
+        {
+            instanceLock.Dispose();
+            throw new InvalidDataException("Could not recover the pending project rename. Configuration and backup folders were preserved. " + error.Message, error);
         }
     }
 
@@ -123,6 +130,181 @@ public sealed partial class ProjectRegistry : IDisposable
         }
     }
 
+    public Project Rename(Guid projectId, string name)
+    {
+        lock (gate)
+        {
+            EnsureIdle();
+            ValidateName(name);
+            var project = State.Projects.FirstOrDefault(current => current.Id == projectId)
+                ?? throw new ArgumentException("The project does not exist.", nameof(projectId));
+            if (State.Projects.Any(current => current.Id != projectId &&
+                string.Equals(current.Name, name, StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException("An active or inactive project already has this name.", nameof(name));
+            if (project.Name == name) return project;
+
+            var source = Path.Combine(State.BackupRoot, project.Name);
+            var destination = Path.Combine(State.BackupRoot, name);
+            ValidateCopyPath(source, ItemType.Folder, true);
+            ValidateCopyPath(destination, ItemType.Folder, true);
+            var caseOnly = OperatingSystem.IsWindows() && string.Equals(project.Name, name, StringComparison.OrdinalIgnoreCase);
+            if (RenameFolderExists(destination, caseOnly))
+                throw new IOException($"The backup destination already exists: {destination}. No folders were merged.");
+            var updated = project with { Name = name };
+            var projects = Array.AsReadOnly(State.Projects.Select(current => current.Id == projectId ? updated : current).ToArray());
+            var proposal = State with { Projects = projects };
+            if (!RenameFolderExists(source, caseOnly))
+            {
+                // A case-sensitive Windows folder may have unexpected physical casing; do not abandon it.
+                if (caseOnly && Directory.Exists(source))
+                    throw new IOException($"The backup folder casing does not match the registry: {source}.");
+                try
+                {
+                    Save(proposal);
+                    return updated;
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+                {
+                    try { ReloadAfterRenameFailure(); }
+                    catch (Exception recoveryError)
+                    {
+                        RequiresRenameRecovery = true;
+                        throw new IOException("Rename failed and the saved configuration could not be reloaded. Changes are blocked. Restart to reload it. " + recoveryError.Message, error);
+                    }
+                    throw new IOException("Rename did not finish successfully. The saved configuration was reloaded. " + error.Message, error);
+                }
+            }
+
+            var temporaryName = $".rename-{projectId:N}-{Guid.NewGuid():N}";
+            var temporaryFolder = Path.Combine(State.BackupRoot, temporaryName);
+            ValidateCopyPath(temporaryFolder, ItemType.Folder, true);
+            if (RenameFolderExists(temporaryFolder, false) || State.Projects.Any(current =>
+                string.Equals(current.Name, temporaryName, StringComparison.OrdinalIgnoreCase)))
+                throw new IOException("The temporary rename destination already exists.");
+            var pending = new XDocument(new XElement("Rename", new XAttribute("id", projectId),
+                new XAttribute("root", State.BackupRoot), new XAttribute("old", project.Name),
+                new XAttribute("new", name), new XAttribute("temporary", temporaryName)));
+            var journal = file + ".rename.xml";
+            var journalTemporary = journal + $".{Guid.NewGuid():N}.tmp";
+            try
+            {
+                using (var stream = new FileStream(journalTemporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    pending.Save(stream);
+                    stream.Flush(true);
+                }
+                File.Move(journalTemporary, journal);
+            }
+            finally
+            {
+                try { File.Delete(journalTemporary); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            RequiresRenameRecovery = true;
+            try
+            {
+                // The intermediate sibling also makes case-only renames explicit on Windows.
+                ValidateCopyPath(source, ItemType.Folder, false);
+                Directory.Move(source, temporaryFolder);
+                ValidateCopyPath(destination, ItemType.Folder, true);
+                Directory.Move(temporaryFolder, destination);
+                Save(proposal);
+                RecoverRename();
+                return updated;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+            {
+                try
+                {
+                    // Inspect the persisted decision, including a replacement that succeeded before reporting an error.
+                    ReloadAfterRenameFailure();
+                    RecoverRename();
+                }
+                catch (Exception recoveryError)
+                {
+                    throw new IOException($"Rename failed and recovery is pending. Changes are blocked. Backup candidates: {source}; {temporaryFolder}; {destination}. Restart to retry recovery. {recoveryError.Message}", error);
+                }
+                throw new IOException("Rename did not finish successfully. The registry locates the preserved backup. " + error.Message, error);
+            }
+        }
+    }
+
+    private void ReloadAfterRenameFailure()
+    {
+        using var stream = File.OpenRead(file);
+        using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit });
+        State = Read(XDocument.Load(reader));
+    }
+
+    private static bool RenameFolderExists(string path, bool exactCase)
+    {
+        // File.Exists/Directory.Exists suppress access errors and cannot safely decide whether a destination is free.
+        try { File.GetAttributes(path); }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+        return !exactCase || Directory.EnumerateFileSystemEntries(Path.GetDirectoryName(path)!)
+            .Any(entry => string.Equals(Path.GetFileName(entry), Path.GetFileName(path), StringComparison.Ordinal));
+    }
+
+    private void RecoverRename()
+    {
+        XDocument pending;
+        try
+        {
+            using var stream = File.OpenRead(file + ".rename.xml");
+            using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit });
+            pending = XDocument.Load(reader);
+        }
+        catch (FileNotFoundException)
+        {
+            if (RequiresRenameRecovery) throw new IOException("The pending rename record is missing.");
+            return;
+        }
+        RequiresRenameRecovery = true;
+        var node = pending.Root ?? throw new InvalidDataException("Missing rename record.");
+        if (node.Name != "Rename") throw new InvalidDataException("Unsupported rename record.");
+        ValidateStructure(node, ["id", "root", "old", "new", "temporary"], []);
+        var projectId = Guid.Parse((string)node.Attribute("id")!);
+        var oldName = (string)node.Attribute("old")!;
+        var newName = (string)node.Attribute("new")!;
+        var temporaryName = (string)node.Attribute("temporary")!;
+        ValidateName(oldName);
+        ValidateName(newName);
+        var prefix = $".rename-{projectId:N}-";
+        if (!temporaryName.StartsWith(prefix, StringComparison.Ordinal) ||
+            !Guid.TryParseExact(temporaryName[prefix.Length..], "N", out _) || oldName == newName ||
+            !string.Equals((string)node.Attribute("root")!, State.BackupRoot, StringComparison.Ordinal) ||
+            State.Projects.Any(current => current.Id != projectId &&
+                (string.Equals(current.Name, oldName, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(current.Name, newName, StringComparison.OrdinalIgnoreCase))) ||
+            State.Projects.Any(current => string.Equals(current.Name, temporaryName, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException("The pending rename does not match this registry.");
+        var project = State.Projects.FirstOrDefault(current => current.Id == projectId);
+        if (project is null || (project.Name != oldName && project.Name != newName))
+            throw new InvalidDataException("The pending rename project does not match this registry.");
+        var caseOnly = OperatingSystem.IsWindows() && string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase);
+        var candidates = new[] { oldName, newName, temporaryName }.Select(name => Path.Combine(State.BackupRoot, name)).ToArray();
+        foreach (var candidate in candidates) ValidateCopyPath(candidate, ItemType.Folder, true);
+        var present = candidates.Where(candidate => RenameFolderExists(candidate, caseOnly)).ToArray();
+        if (present.Length != 1)
+            throw new IOException("Cannot locate one unambiguous backup folder. Preserved candidates: " + string.Join("; ", candidates));
+        var destination = Path.Combine(State.BackupRoot, project.Name);
+        if (!string.Equals(present[0], destination, StringComparison.Ordinal))
+        {
+            ValidateCopyPath(present[0], ItemType.Folder, false);
+            ValidateCopyPath(destination, ItemType.Folder, true);
+            if (caseOnly && present[0] != candidates[2])
+            {
+                Directory.Move(present[0], candidates[2]);
+                Directory.Move(candidates[2], destination);
+            }
+            else Directory.Move(present[0], destination);
+        }
+        File.Delete(file + ".rename.xml");
+        RequiresRenameRecovery = false;
+    }
+
     public void SetCopyConfirmation(bool enabled)
     {
         lock (gate)
@@ -153,6 +335,7 @@ public sealed partial class ProjectRegistry : IDisposable
     private void EnsureIdle()
     {
         ObjectDisposedException.ThrowIf(disposed, this);
+        if (RequiresRenameRecovery) throw new InvalidOperationException("A project rename needs recovery. Restart the application before making changes.");
         if (executionId is not null) throw new InvalidOperationException("An operation is already in progress. Changes are blocked until it finishes.");
     }
 
@@ -161,7 +344,7 @@ public sealed partial class ProjectRegistry : IDisposable
         lock (gate)
         {
             if (disposed) return;
-            EnsureIdle();
+            if (executionId is not null) throw new InvalidOperationException("An operation is already in progress.");
             disposed = true;
             instanceLock.Dispose();
         }

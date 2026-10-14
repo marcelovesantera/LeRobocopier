@@ -177,6 +177,9 @@ public partial class MainWindow : Window
     private void Create_Click(object? sender, RoutedEventArgs args) =>
         (DataContext as MainWindowViewModel)?.Create();
 
+    private void Rename_Click(object? sender, RoutedEventArgs args) =>
+        (DataContext as MainWindowViewModel)?.Rename();
+
     private void Open_Click(object? sender, RoutedEventArgs args)
     {
         if (sender is Button { DataContext: Project project })
