@@ -1,0 +1,4 @@
+/Build-DebianPackage.sh text eol=lf
+/LeRobocopier.Linux.sh text eol=lf
+/LeRobocopier.Linux.desktop text eol=lf
+/LeRobocopier.Linux.svg text eol=lf
