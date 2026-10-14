@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Le Robocopier
+GenericName=Project Backup
+Comment=Copy, move and restore verified project backups
+Exec=/usr/bin/le-robocopier
+Icon=le-robocopier
+Terminal=false
+Categories=Utility;Archiving;
+Keywords=backup;copy;move;restore;
