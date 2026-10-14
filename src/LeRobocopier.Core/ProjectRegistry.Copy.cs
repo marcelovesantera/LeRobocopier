@@ -15,23 +15,34 @@ public sealed partial class ProjectRegistry
     public CopyPreparation PrepareMove(Guid projectId, IProgress<OperationProgress>? progress = null)
         => PrepareCopy(projectId, false, true, progress);
 
-    private CopyPreparation PrepareCopy(Guid projectId, bool restore, bool move, IProgress<OperationProgress>? progress)
+    public CopyPreparation PrepareMigration(string backupRoot, IProgress<OperationProgress>? progress = null)
+        => PrepareCopy(Guid.Empty, false, false, progress, backupRoot);
+
+    private CopyPreparation PrepareCopy(Guid projectId, bool restore, bool move, IProgress<OperationProgress>? progress,
+        string? migrationRoot = null)
     {
         Guid id;
         lock (gate)
         {
             EnsureIdle();
-            GetProject(projectId);
+            if (migrationRoot is null) GetProject(projectId);
+            else
+            {
+                migrationRoot = NormalizePath(migrationRoot);
+                if (ContainsPath(State.BackupRoot, migrationRoot) && ContainsPath(migrationRoot, State.BackupRoot))
+                    return new CopyPreparation(null, null);
+            }
             id = Guid.NewGuid();
             executionId = id;
             copyProjectId = projectId;
             restoreOperation = restore;
             moveOperation = move;
+            preparedMigrationRoot = migrationRoot;
             inventoryPath = null;
         }
         try
         {
-            var plan = InventoryCopy(id, projectId, restore, move, progress);
+            var plan = InventoryCopy(id, projectId, restore, move, progress, migrationRoot: migrationRoot);
             preparedOverwrites = plan.Overwrites ?? Array.Empty<string>();
             return new CopyPreparation(plan, null);
         }
@@ -61,7 +72,11 @@ public sealed partial class ProjectRegistry
     public CopyResult Move(CopyPlan plan, bool disableConfirmation = false, IProgress<OperationProgress>? progress = null)
         => Copy(plan, false, true, disableConfirmation, progress);
 
-    private CopyResult Copy(CopyPlan plan, bool restore, bool move, bool disableConfirmation, IProgress<OperationProgress>? progress)
+    public CopyResult Migrate(CopyPlan plan, IProgress<OperationProgress>? progress = null)
+        => Copy(plan, false, false, false, progress, true);
+
+    private CopyResult Copy(CopyPlan plan, bool restore, bool move, bool disableConfirmation, IProgress<OperationProgress>? progress,
+        bool migration = false)
     {
         lock (gate)
         {
@@ -69,6 +84,8 @@ public sealed partial class ProjectRegistry
             if (copyProjectId != plan.ProjectId) throw new InvalidOperationException("The prepared project cannot be changed.");
             if (restoreOperation != restore || plan.IsRestore != restore || moveOperation != move || plan.IsMove != move)
                 throw new InvalidOperationException("The prepared operation cannot be changed.");
+            if (migration != (preparedMigrationRoot is not null) || plan.MigrationRoot != preparedMigrationRoot)
+                throw new InvalidOperationException("The prepared migration cannot be changed.");
             // Claim the prepared operation once, including against callers using the same plan.
             if (copyRunning) throw new InvalidOperationException("This operation is already running.");
             copyRunning = true;
@@ -81,6 +98,10 @@ public sealed partial class ProjectRegistry
         var remaining = new HashSet<string>(pathComparer);
         var stage = OperationStage.Preparing;
         var current = "";
+        var oldRoot = State.BackupRoot;
+        var backupRootChanged = false;
+        var migrationRoot = preparedMigrationRoot;
+        var stagingRoot = migration ? Path.Combine(migrationRoot!, $".lerobocopier-migration-{plan.ExecutionId:N}") : null;
         var restoreConfirmationRequired = restore && State.Confirmations.Restore;
         inventoryPath = null;
         try
@@ -94,10 +115,23 @@ public sealed partial class ProjectRegistry
                     : State.Confirmations with { Copy = false } });
             }
             // Confirmation may have taken arbitrarily long; the old inventory authorizes no writes.
-            var inventoriedFiles = move ? new Dictionary<string, (long Length, byte[] Hash)>(pathComparer) : null;
-            var inventory = InventoryCopy(plan.ExecutionId, plan.ProjectId, restore, move, progress, inventoriedFiles);
-            if (move) remaining.UnionWith(inventory.Entries.Select(entry => entry.Source));
+            var inventoriedFiles = move || migration ? new Dictionary<string, (long Length, byte[] Hash)>(pathComparer) : null;
+            var inventory = InventoryCopy(plan.ExecutionId, plan.ProjectId, restore, move, progress, inventoriedFiles,
+                migrationRoot, stagingRoot);
+            if (move || migration) remaining.UnionWith(inventory.Entries.Select(entry => entry.Source));
             warnings.AddRange(inventory.Warnings);
+            if (migration)
+            {
+                ValidateMigrationRoot(migrationRoot!);
+                inventoryPath = stagingRoot;
+                ValidateCopyPath(stagingRoot!, ItemType.Folder, true);
+                if (RenameFolderExists(stagingRoot!, false))
+                    throw new IOException($"The migration staging folder already exists: {stagingRoot}");
+                if (State.Projects.Any(project => pathComparer.Equals(project.Name, Path.GetFileName(stagingRoot))))
+                    throw new IOException("The migration staging name conflicts with a registered project.");
+                written.Add(stagingRoot!);
+                Directory.CreateDirectory(stagingRoot!);
+            }
             var confirmedOverwrites = new HashSet<string>(preparedOverwrites, pathComparer);
             var newOverwrite = restoreConfirmationRequired
                 ? inventory.Overwrites!.FirstOrDefault(path => !confirmedOverwrites.Contains(path)) : null;
@@ -183,7 +217,7 @@ public sealed partial class ProjectRegistry
                         catch (UnauthorizedAccessException) { }
                     }
                     expected.Add(entry.Destination, (sourceLength, hash.GetHashAndReset()));
-                    if (move)
+                    if (move || migration)
                     {
                         var inventoried = inventoriedFiles![entry.Source];
                         var copied = expected[entry.Destination];
@@ -230,7 +264,86 @@ public sealed partial class ProjectRegistry
                     File.SetUnixFileMode(entry.Destination, File.GetUnixFileMode(entry.Source));
                 progress?.Report(new OperationProgress(stage, current, ++completed, total));
             }
-            if (move)
+            if (migration)
+            {
+                stage = OperationStage.Publishing;
+                ValidateMigrationRoot(migrationRoot!);
+                foreach (var project in State.Projects)
+                {
+                    var staged = Path.Combine(stagingRoot!, project.Name);
+                    if (!inventory.Entries.Any(entry => pathComparer.Equals(entry.Destination, staged))) continue;
+                    current = Path.Combine(migrationRoot!, project.Name);
+                    progress?.Report(new OperationProgress(stage, current, 0, total));
+                    ValidateCopyPath(staged, ItemType.Folder, false);
+                    ValidateCopyPath(current, ItemType.Folder, true);
+                    // Directory.Move refuses occupied destinations; never merge a preexisting backup.
+                    Directory.Move(staged, current);
+                    for (var index = 0; index < written.Count; index++)
+                        if (ContainsPath(staged, written[index]))
+                            written[index] = Path.Combine(current, Path.GetRelativePath(staged, written[index]));
+                    for (var index = 0; index < verified.Count; index++)
+                        if (ContainsPath(staged, verified[index]))
+                            verified[index] = Path.Combine(current, Path.GetRelativePath(staged, verified[index]));
+                }
+                inventory = inventory with { Entries = Array.AsReadOnly(inventory.Entries.Select(entry => entry with
+                {
+                    Destination = Path.Combine(migrationRoot!, Path.GetRelativePath(stagingRoot!, entry.Destination))
+                }).ToArray()) };
+                expected = expected.ToDictionary(pair => Path.Combine(migrationRoot!, Path.GetRelativePath(stagingRoot!, pair.Key)),
+                    pair => pair.Value, pathComparer);
+                ValidateCopyPath(stagingRoot!, ItemType.Folder, false);
+                Directory.Delete(stagingRoot!, false);
+                written.Remove(stagingRoot!);
+
+                // Publication and metadata may take time. Verify the complete snapshot again before changing the registry.
+                stage = OperationStage.Verifying;
+                var authorized = inventory.Entries.ToDictionary(entry => entry.Source, pathComparer);
+                var children = inventory.Entries.GroupBy(entry => Path.GetDirectoryName(entry.Source)!, pathComparer)
+                    .ToDictionary(group => group.Key,
+                        group => new HashSet<string>(group.Select(entry => entry.Source), pathComparer), pathComparer);
+                foreach (var entry in inventory.Entries)
+                {
+                    current = entry.Source;
+                    progress?.Report(new OperationProgress(stage, current, 0, total));
+                    ValidateMoveEntry(entry, expected, authorized, children, remaining);
+                }
+                // A previously absent project folder may have appeared while other projects were copied.
+                foreach (var project in State.Projects)
+                {
+                    var source = Path.Combine(oldRoot, project.Name);
+                    if (!authorized.ContainsKey(source) && RenameFolderExists(source, false))
+                        throw new IOException($"A backup appeared after inventory: {source}. Prepare migration again.");
+                    var destination = Path.Combine(migrationRoot!, project.Name);
+                    if (!authorized.ContainsKey(source) && RenameFolderExists(destination, false))
+                        throw new IOException($"A backup destination became occupied: {destination}.");
+                }
+                stage = OperationStage.Saving;
+                current = file;
+                progress?.Report(new OperationProgress(stage, current, 0, total));
+                var configurationExisted = RenameFolderExists(file, false);
+                try
+                {
+                    Save(State with { BackupRoot = migrationRoot! });
+                    backupRootChanged = true;
+                }
+                catch (Exception saveError)
+                {
+                    try
+                    {
+                        // Replacement can finish before an I/O callback reports failure. Follow the disk decision.
+                        try { ReloadSavedConfiguration(); }
+                        catch (FileNotFoundException) when (!configurationExisted) { }
+                        backupRootChanged = pathComparer.Equals(State.BackupRoot, migrationRoot);
+                    }
+                    catch (Exception reloadError)
+                    {
+                        RequiresConfigurationReload = true;
+                        throw new IOException("The saved backup root could not be confirmed. All old backups were preserved; restart to reload the configuration. " + reloadError.Message, saveError);
+                    }
+                    throw new IOException("Saving reported a failure. The saved configuration was reloaded and all old backups were preserved. " + saveError.Message, saveError);
+                }
+            }
+            if (move || migration)
             {
                 stage = OperationStage.Removing;
                 // Only the fresh, globally verified inventory can authorize removal.
@@ -266,7 +379,8 @@ public sealed partial class ProjectRegistry
             progress?.Report(new OperationProgress(OperationStage.Completed, "", total, total));
             return new CopyResult(written.AsReadOnly(), verified.AsReadOnly(), warnings.AsReadOnly(), null)
             {
-                RemovedPaths = removed.AsReadOnly(), RemainingPaths = Array.AsReadOnly(remaining.ToArray())
+                RemovedPaths = removed.AsReadOnly(), RemainingPaths = Array.AsReadOnly(remaining.ToArray()),
+                BackupRootChanged = backupRootChanged
             };
         }
         catch (Exception error)
@@ -275,7 +389,8 @@ public sealed partial class ProjectRegistry
             return new CopyResult(written.AsReadOnly(), verified.AsReadOnly(), warnings.AsReadOnly(),
                 new OperationIssue(stage, current, error.Message))
             {
-                RemovedPaths = removed.AsReadOnly(), RemainingPaths = Array.AsReadOnly(remaining.ToArray())
+                RemovedPaths = removed.AsReadOnly(), RemainingPaths = Array.AsReadOnly(remaining.ToArray()),
+                BackupRootChanged = backupRootChanged
             };
         }
         finally
@@ -293,86 +408,111 @@ public sealed partial class ProjectRegistry
     private string? inventoryPath;
     private bool restoreOperation;
     private bool moveOperation;
+    private string? preparedMigrationRoot;
     private IReadOnlyList<string> preparedOverwrites = Array.Empty<string>();
 
     private CopyPlan InventoryCopy(Guid id, Guid projectId, bool restore, bool move, IProgress<OperationProgress>? progress,
-        Dictionary<string, (long Length, byte[] Hash)>? inventoriedFiles = null)
+        Dictionary<string, (long Length, byte[] Hash)>? inventoriedFiles = null,
+        string? migrationRoot = null, string? stagingRoot = null)
     {
-        var project = GetProject(projectId);
         var entries = new List<CopyEntry>();
         var warnings = new List<OperationIssue>();
         var overwrites = new List<string>();
-        var destinationRoot = NormalizePath(Path.Combine(State.BackupRoot, project.Name));
-        inventoryPath = destinationRoot;
-        ValidateCopyPath(destinationRoot, ItemType.Folder, true);
-        foreach (var selected in project.Items)
+        if (migrationRoot is not null) ValidateMigrationRoot(migrationRoot);
+        foreach (var project in migrationRoot is null ? [GetProject(projectId)] : State.Projects)
         {
-            var original = NormalizePath(selected.Path);
-            var root = Path.GetPathRoot(original)!;
-            var rootName = OperatingSystem.IsWindows()
-                ? Path.Combine("UNC", root.Trim(Path.DirectorySeparatorChar)) : "root";
-            if (OperatingSystem.IsWindows() && root.Length == 3 && root[1] == ':') rootName = root[..1];
-            var backup = NormalizePath(Path.Combine(destinationRoot, rootName, original[root.Length..]));
-            if (!ContainsPath(destinationRoot, backup)) throw new IOException($"Invalid mapped destination: {backup}");
-            var selectedSource = restore ? backup : original;
-            inventoryPath = selectedSource;
-            try { ValidateCopyPath(selectedSource, selected.Type, false); }
-            catch (FileNotFoundException)
+            var destinationRoot = NormalizePath(Path.Combine(stagingRoot ?? migrationRoot ?? State.BackupRoot, project.Name));
+            inventoryPath = destinationRoot;
+            ValidateCopyPath(destinationRoot, ItemType.Folder, true);
+            foreach (var selected in migrationRoot is null ? project.Items :
+                [new SelectedItem(ItemType.Folder, Path.Combine(State.BackupRoot, project.Name))])
             {
-                warnings.Add(new OperationIssue(OperationStage.Preparing, selectedSource,
-                    restore ? "The selected item is missing from the backup." : "The selected item is missing."));
-                continue;
-            }
-            catch (DirectoryNotFoundException)
-            {
-                warnings.Add(new OperationIssue(OperationStage.Preparing, selectedSource,
-                    restore ? "The selected item is missing from the backup." : "The selected item is missing."));
-                continue;
-            }
-            var pending = new Stack<SelectedItem>();
-            pending.Push(new SelectedItem(selected.Type, selectedSource));
-            while (pending.TryPop(out var item))
-            {
-                var source = NormalizePath(item.Path);
-                inventoryPath = source;
-                ValidateCopyPath(source, item.Type, false);
-                progress?.Report(new OperationProgress(OperationStage.Preparing, source, entries.Count, 0));
-                // Relative descendants are anchored to the registered original, never inferred from a filename.
-                var destination = NormalizePath(Path.Combine(restore ? original : backup,
-                    Path.GetRelativePath(selectedSource, source)));
-                if (!ContainsPath(restore ? original : backup, destination))
-                    throw new IOException($"Invalid mapped destination: {destination}");
-                inventoryPath = destination;
-                ValidateCopyPath(destination, item.Type, true);
-                entries.Add(new CopyEntry(item.Type, source, destination));
-                if (restore && item.Type == ItemType.File && File.Exists(destination)) overwrites.Add(destination);
-                if (item.Type == ItemType.File)
+                var original = NormalizePath(selected.Path);
+                var root = Path.GetPathRoot(original)!;
+                var rootName = OperatingSystem.IsWindows()
+                    ? Path.Combine("UNC", root.Trim(Path.DirectorySeparatorChar)) : "root";
+                if (OperatingSystem.IsWindows() && root.Length == 3 && root[1] == ':') rootName = root[..1];
+                var backup = migrationRoot is not null ? destinationRoot :
+                    NormalizePath(Path.Combine(destinationRoot, rootName, original[root.Length..]));
+                if (!ContainsPath(destinationRoot, backup)) throw new IOException($"Invalid mapped destination: {backup}");
+                var selectedSource = restore ? backup : original;
+                inventoryPath = selectedSource;
+                try { ValidateCopyPath(selectedSource, selected.Type, false); }
+                catch (FileNotFoundException)
                 {
-                    inventoryPath = source;
-                    using var readable = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read,
-                        128 * 1024, FileOptions.SequentialScan);
-                    if (OperatingSystem.IsWindows() && File.Exists(destination) && SameWindowsFile(readable, destination))
-                        throw new IOException($"The destination is a hard link to the source: {destination}");
-                    var length = readable.Length;
-                    var hash = SHA256.HashData(readable);
-                    if (move && readable.Length != length)
-                        throw new IOException("The source size changed during inventory.");
-                    inventoriedFiles?.Add(source, (length, hash));
+                    warnings.Add(new OperationIssue(OperationStage.Preparing, selectedSource,
+                        restore ? "The selected item is missing from the backup." : "The selected item is missing."));
+                    continue;
                 }
-                if (item.Type == ItemType.Folder)
+                catch (DirectoryNotFoundException)
                 {
-                    foreach (var child in Directory.EnumerateFileSystemEntries(source))
+                    warnings.Add(new OperationIssue(OperationStage.Preparing, selectedSource,
+                        restore ? "The selected item is missing from the backup." : "The selected item is missing."));
+                    continue;
+                }
+                var pending = new Stack<SelectedItem>();
+                pending.Push(new SelectedItem(selected.Type, selectedSource));
+                while (pending.TryPop(out var item))
+                {
+                    var source = NormalizePath(item.Path);
+                    inventoryPath = source;
+                    ValidateCopyPath(source, item.Type, false);
+                    progress?.Report(new OperationProgress(OperationStage.Preparing, source, entries.Count, 0));
+                    // Relative descendants are anchored to the registered original, never inferred from a filename.
+                    var destination = NormalizePath(Path.Combine(restore ? original : backup,
+                        Path.GetRelativePath(selectedSource, source)));
+                    if (!ContainsPath(restore ? original : backup, destination))
+                        throw new IOException($"Invalid mapped destination: {destination}");
+                    inventoryPath = destination;
+                    ValidateCopyPath(destination, item.Type, true);
+                    entries.Add(new CopyEntry(item.Type, source, destination));
+                    if (restore && item.Type == ItemType.File && File.Exists(destination)) overwrites.Add(destination);
+                    if (item.Type == ItemType.File)
                     {
-                        inventoryPath = child;
-                        var attributes = File.GetAttributes(child);
-                        if ((attributes & FileAttributes.ReparsePoint) != 0)
-                            throw new IOException($"Links and junctions are unsupported: {child}");
-                        pending.Push(new SelectedItem((attributes & FileAttributes.Directory) != 0 ? ItemType.Folder : ItemType.File, child));
+                        inventoryPath = source;
+                        using var readable = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read,
+                            128 * 1024, FileOptions.SequentialScan);
+                        if (OperatingSystem.IsWindows() && File.Exists(destination) && SameWindowsFile(readable, destination))
+                            throw new IOException($"The destination is a hard link to the source: {destination}");
+                        var length = readable.Length;
+                        var hash = SHA256.HashData(readable);
+                        if ((move || migrationRoot is not null) && readable.Length != length)
+                            throw new IOException("The source size changed during inventory.");
+                        inventoriedFiles?.Add(source, (length, hash));
+                    }
+                    if (item.Type == ItemType.Folder)
+                    {
+                        foreach (var child in Directory.EnumerateFileSystemEntries(source))
+                        {
+                            inventoryPath = child;
+                            var attributes = File.GetAttributes(child);
+                            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                                throw new IOException($"Links and junctions are unsupported: {child}");
+                            pending.Push(new SelectedItem((attributes & FileAttributes.Directory) != 0 ? ItemType.Folder : ItemType.File, child));
+                        }
                     }
                 }
             }
         }
-        return new CopyPlan(id, projectId, entries.AsReadOnly(), warnings.AsReadOnly(), restore, overwrites.AsReadOnly(), move);
+        return new CopyPlan(id, projectId, entries.AsReadOnly(), warnings.AsReadOnly(), restore, overwrites.AsReadOnly(), move, migrationRoot);
+    }
+
+    private void ValidateMigrationRoot(string migrationRoot)
+    {
+        inventoryPath = migrationRoot;
+        if (ContainsPath(State.BackupRoot, migrationRoot) || ContainsPath(migrationRoot, State.BackupRoot))
+            throw new ArgumentException("The old and new backup roots must not contain each other.");
+        ValidateCopyPath(State.BackupRoot, ItemType.Folder, true);
+        ValidateCopyPath(migrationRoot, ItemType.Folder, true);
+        foreach (var project in State.Projects)
+        {
+            foreach (var item in project.Items) ValidateItem(item, Array.Empty<SelectedItem>(), migrationRoot);
+            var destination = Path.Combine(migrationRoot, project.Name);
+            inventoryPath = destination;
+            ValidateCopyPath(destination, ItemType.Folder, true);
+            if (RenameFolderExists(destination, false))
+                throw new IOException($"The backup destination already exists: {destination}. No folders were merged.");
+        }
     }
 
     private static void ValidateMoveEntry(CopyEntry entry, Dictionary<string, (long Length, byte[] Hash)> expected,

@@ -21,13 +21,45 @@ public partial class MainWindow : Window
 
     private async void Move_Click(object? sender, RoutedEventArgs args) => await RunOperation(false, true);
 
-    private async Task RunOperation(bool restore, bool move = false)
+    private async void ChangeBackupRoot_Click(object? sender, RoutedEventArgs args)
     {
-        if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCopy) return;
-        var operation = restore ? "Restore" : move ? "Move" : "Copy";
-        var project = viewModel.Selected!;
+        if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCreate) return;
+        string? backupRoot = null;
         viewModel.IsBusy = true;
-        var (modal, details, bar, summary, choices, content) = CreateOperationDialog(operation, project.Name);
+        try
+        {
+            if (!StorageProvider.CanPickFolder) throw new NotSupportedException("The folder picker is unavailable in this environment.");
+            var chosen = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Choose a new backup root", AllowMultiple = false
+            });
+            try
+            {
+                if (chosen.Count > 0)
+                    backupRoot = chosen[0].TryGetLocalPath() ?? throw new ArgumentException("Select a folder with a full local path.");
+            }
+            finally
+            {
+                foreach (var folder in chosen) folder.Dispose();
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            viewModel.ReportError(error.Message);
+        }
+        finally { viewModel.IsBusy = false; }
+        if (backupRoot is not null) await RunOperation(false, migrationRoot: backupRoot);
+    }
+
+    private async Task RunOperation(bool restore, bool move = false, string? migrationRoot = null)
+    {
+        var migration = migrationRoot is not null;
+        if (DataContext is not MainWindowViewModel viewModel || !(migration ? viewModel.CanCreate : viewModel.CanCopy)) return;
+        var operation = migration ? "Migrate backup root" : restore ? "Restore" : move ? "Move" : "Copy";
+        var project = viewModel.Selected;
+        var oldRoot = viewModel.BackupRoot;
+        viewModel.IsBusy = true;
+        var (modal, details, bar, summary, choices, content) = CreateOperationDialog(operation, migration ? "All projects" : project!.Name);
         var running = true;
         modal.Closing += (_, eventArgs) => eventArgs.Cancel = running;
         var modalClosed = modal.ShowDialog(this);
@@ -43,22 +75,28 @@ public partial class MainWindow : Window
         });
         try
         {
-            var preparation = await Task.Run(() => restore
-                ? viewModel.PrepareRestore(project.Id, progress) : move
-                    ? viewModel.PrepareMove(project.Id, progress) : viewModel.PrepareCopy(project.Id, progress));
+            var preparation = await Task.Run(() => migration ? viewModel.PrepareMigration(migrationRoot!, progress) : restore
+                ? viewModel.PrepareRestore(project!.Id, progress) : move
+                    ? viewModel.PrepareMove(project!.Id, progress) : viewModel.PrepareCopy(project!.Id, progress));
             showProgress = false;
             if (preparation.Failure is { } failure)
             {
                 details.Text = "Preparation failed. No operation files were changed.";
                 summary.Text = $"{failure.Stage}: {failure.Path}: {failure.Message}";
             }
+            else if (preparation.Plan is null)
+            {
+                details.Text = "This folder is already the active backup root. No migration is needed.";
+            }
             else
             {
                 plan = preparation.Plan!;
                 var skip = new CheckBox { Content = $"Do not ask again for {operation}" };
-                if (restore ? viewModel.ConfirmRestore : move ? viewModel.ConfirmMove : viewModel.ConfirmCopy)
+                if (migration || (restore ? viewModel.ConfirmRestore : move ? viewModel.ConfirmMove : viewModel.ConfirmCopy))
                 {
-                    details.Text = $"{operation} {plan.Entries.Count} file(s) and folder(s) for {project.Name}? " +
+                    details.Text = migration
+                        ? $"Migrate {plan.Entries.Count} file(s) and folder(s) for all active and inactive projects from {oldRoot} to {migrationRoot}? Complete backups, including extra files, will be copied and verified before saving the new root and removing the old copies. Unrelated files in both roots will be preserved."
+                        : $"{operation} {plan.Entries.Count} file(s) and folder(s) for {project!.Name}? " +
                         (restore ? "Corresponding originals will be replaced. Backup and extra original files will be preserved."
                             : move ? "Originals will be removed only after all copies are verified. Extra backup files will be preserved."
                             : "Originals and extra backup files will be preserved.");
@@ -66,13 +104,13 @@ public partial class MainWindow : Window
                     summary.Text = string.Join(Environment.NewLine, plan.Warnings.Select(warning => $"Warning: {warning.Path}: {warning.Message}"));
                     summary.Text += "\nDestinations:\n" + string.Join(Environment.NewLine,
                         plan.Entries.Select(entry => entry.Destination));
-                    if (move)
-                        summary.Text += "\nOriginals to remove after verification:\n" + string.Join(Environment.NewLine,
+                    if (move || migration)
+                        summary.Text += (migration ? "\nOld backup paths to remove after verification and saving:\n" : "\nOriginals to remove after verification:\n") + string.Join(Environment.NewLine,
                             plan.Entries.Select(entry => entry.Source));
                     if (restore)
                         summary.Text += "\nFiles to overwrite:\n" + (plan.Overwrites!.Count == 0 ? "None."
                             : string.Join(Environment.NewLine, plan.Overwrites));
-                    content.Children.Insert(4, skip);
+                    if (!migration) content.Children.Insert(4, skip);
                     var decision = new TaskCompletionSource<bool>();
                     var proceed = new Button { Content = operation };
                     var decline = new Button { Content = "Back" };
@@ -95,11 +133,16 @@ public partial class MainWindow : Window
                 var disableConfirmation = skip.IsChecked == true;
                 executed = true;
                 showProgress = true;
-                var result = await Task.Run(() => restore
+                var result = await Task.Run(() => migration ? viewModel.Migrate(plan!, progress) : restore
                     ? viewModel.Restore(plan!, disableConfirmation, progress) : move
                         ? viewModel.Move(plan!, disableConfirmation, progress) : viewModel.Copy(plan!, disableConfirmation, progress));
                 showProgress = false;
-                details.Text = result.Failure is not null ? move && result.Failure.Stage == OperationStage.Removing
+                details.Text = migration
+                    ? result.Failure is null ? "Migration completed. The new backup root is active."
+                        : result.BackupRootChanged
+                            ? "The new backup root is active. Migration reported a failure; inspect the old backup paths that remain."
+                            : "Migration failed before confirming the new backup root. No old backup files were removed. Check the saved-root status below."
+                    : result.Failure is not null ? move && result.Failure.Stage == OperationStage.Removing
                     ? result.RemovedPaths.Count > 0
                         ? "Move partially failed during removal. Removed originals were not rolled back. Check reported errors before using backup copies."
                         : "Move failed before removing originals. Check reported errors before using backup copies."
@@ -110,10 +153,12 @@ public partial class MainWindow : Window
                     string.Join(Environment.NewLine, result.Warnings.Select(warning => $"Warning: {warning.Path}: {warning.Message}")) +
                     (result.Failure is null ? "" : $"\nFailure — {result.Failure.Stage}: {result.Failure.Path}: {result.Failure.Message}") +
                     (result.WrittenPaths.Count == 0 ? "" : "\nWritten paths:\n" + string.Join(Environment.NewLine, result.WrittenPaths));
-                if (move)
-                    summary.Text += $"\nRemoved original paths: {result.RemovedPaths.Count}\n" +
+                if (migration)
+                    summary.Text += $"\nLast known backup root: {viewModel.BackupRoot}\n";
+                if (move || migration)
+                    summary.Text += $"\nRemoved {(migration ? "old backup" : "original")} paths: {result.RemovedPaths.Count}\n" +
                         (result.RemovedPaths.Count == 0 ? "None." : string.Join(Environment.NewLine, result.RemovedPaths)) +
-                        $"\nOriginal paths not removed: {result.RemainingPaths.Count}\n" +
+                        $"\n{(migration ? "Old backup" : "Original")} paths not removed: {result.RemainingPaths.Count}\n" +
                         (result.RemainingPaths.Count == 0 ? "None." : string.Join(Environment.NewLine, result.RemainingPaths)) +
                         (result.VerifiedFiles.Count == 0 ? "" : "\nBackup files that passed global verification before removal:\n" +
                             string.Join(Environment.NewLine, result.VerifiedFiles));
