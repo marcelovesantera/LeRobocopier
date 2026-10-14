@@ -1,18 +1,55 @@
 using Avalonia.Controls;
+using Avalonia.Automation;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Layout;
+using Avalonia;
+using Avalonia.Input;
+using Avalonia.Media;
+using Avalonia.Data;
 using LeRobocopier.Core;
 
 namespace LeRobocopier.Desktop;
 
 public partial class MainWindow : Window
 {
+    private bool isInitializing = true;
+
     public MainWindow()
     {
         InitializeComponent();
-        Closing += (_, args) => args.Cancel = (DataContext as MainWindowViewModel)?.IsBusy == true;
+        SizeChanged += (_, _) => UpdateProjectLayout();
+        Opened += (_, _) => UpdateProjectLayout();
+        Opened += InitializeWindow;
+        Closing += (_, args) => args.Cancel = isInitializing || (DataContext as MainWindowViewModel)?.IsBusy == true;
         Closed += (_, _) => (DataContext as MainWindowViewModel)?.Dispose();
+    }
+
+    private async void InitializeWindow(object? sender, EventArgs args)
+    {
+        if (!isInitializing) return;
+        MainWindowViewModel? viewModel = null;
+        try
+        {
+            var initialization = Task.Run(() => new MainWindowViewModel());
+            await Task.WhenAll(initialization, Task.Delay(TimeSpan.FromSeconds(4)));
+            viewModel = await initialization;
+            DataContext = viewModel;
+            Shell.IsVisible = true;
+            InitializationScreen.IsVisible = false;
+        }
+        catch (Exception error)
+        {
+            viewModel?.Dispose();
+            DataContext = null;
+            InitializationMessage.Text = $"Le Robocopier could not start: {error.Message}";
+            InitializationMessage.Classes.Add("error");
+        }
+        finally
+        {
+            InitializationProgress.IsVisible = false;
+            isInitializing = false;
+        }
     }
 
     private async void Copy_Click(object? sender, RoutedEventArgs args) => await RunOperation(false);
@@ -83,6 +120,7 @@ public partial class MainWindow : Window
             {
                 details.Text = "Preparation failed. No operation files were changed.";
                 summary.Text = $"{failure.Stage}: {failure.Path}: {failure.Message}";
+                SetOperationStatus(details, "error");
             }
             else if (preparation.Plan is null)
             {
@@ -113,6 +151,7 @@ public partial class MainWindow : Window
                     if (!migration) content.Children.Insert(4, skip);
                     var decision = new TaskCompletionSource<bool>();
                     var proceed = new Button { Content = operation };
+                    proceed.Classes.Add("primary");
                     var decline = new Button { Content = "Back" };
                     proceed.Click += (_, _) => decision.TrySetResult(true);
                     decline.Click += (_, _) => decision.TrySetResult(false);
@@ -152,7 +191,11 @@ public partial class MainWindow : Window
                 summary.Text = $"Written paths (including potentially incomplete files): {result.WrittenPaths.Count}\nVerified files: {result.VerifiedFiles.Count}\n" +
                     string.Join(Environment.NewLine, result.Warnings.Select(warning => $"Warning: {warning.Path}: {warning.Message}")) +
                     (result.Failure is null ? "" : $"\nFailure — {result.Failure.Stage}: {result.Failure.Path}: {result.Failure.Message}") +
-                    (result.WrittenPaths.Count == 0 ? "" : "\nWritten paths:\n" + string.Join(Environment.NewLine, result.WrittenPaths));
+                    (result.WrittenPaths.Count == 0 ? "" : "\nWritten paths:\n" + string.Join(Environment.NewLine, result.WrittenPaths)) +
+                    (result.VerifiedFiles.Count == 0 ? "" : "\nVerified files:\n" + string.Join(Environment.NewLine, result.VerifiedFiles));
+                SetOperationStatus(details, result.Failure is not null
+                    ? result.WrittenPaths.Count > 0 || result.RemovedPaths.Count > 0 || result.BackupRootChanged ? "warning" : "error"
+                    : result.Warnings.Count > 0 ? "warning" : "success");
                 if (migration)
                     summary.Text += $"\nLast known backup root: {viewModel.BackupRoot}\n";
                 if (move || migration)
@@ -169,6 +212,7 @@ public partial class MainWindow : Window
         {
             details.Text = $"{operation} could not finish.";
             summary.Text = error.Message;
+            SetOperationStatus(details, "error");
         }
         finally
         {
@@ -196,31 +240,113 @@ public partial class MainWindow : Window
         var bar = new ProgressBar { IsIndeterminate = true, Minimum = 0, Maximum = 100 };
         var summary = new TextBlock { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
         var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        var content = new StackPanel { Spacing = 18, Margin = new Avalonia.Thickness(24) };
-        content.Children.Add(new TextBlock { Text = $"{operation} — {projectName}", FontSize = 22 });
-        content.Children.Add(details);
+        var content = new StackPanel { Spacing = 16, Margin = (Thickness)Application.Current!.FindResource("ModalPadding")! };
+        var heading = new TextBlock { Text = $"{operation} \u2014 {projectName}" };
+        heading.Classes.Add("modal-title");
+        content.Children.Add(heading);
+        content.Children.Add(new Border { Child = details, Padding = new Thickness(12), CornerRadius = new CornerRadius(8) });
         content.Children.Add(bar);
         content.Children.Add(new ScrollViewer { Content = summary, MaxHeight = 240 });
         content.Children.Add(choices);
         var modal = new Window
         {
             Title = operation, Width = 640, Height = 500, MinWidth = 480, MinHeight = 380,
-            CanResize = true, WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = content
+            CanResize = true, WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = new ScrollViewer { Content = content, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled }
         };
         return (modal, details, bar, summary, choices, content);
+    }
+
+    private static void SetOperationStatus(TextBlock details, string status)
+    {
+        details.Classes.Add(status);
+        if (details.Parent is Border surface) surface.Classes.Add(status);
+        details.Text = (status == "success" ? "\u2713 " : status == "warning" ? "\u26A0 Warning: " : "\u2717 Error: ") + details.Text;
     }
 
     private void Settings_Click(object? sender, RoutedEventArgs args) =>
         (DataContext as MainWindowViewModel)?.Navigate(MainPanel.Settings);
 
-    private void NewProject_Click(object? sender, RoutedEventArgs args) =>
-        (DataContext as MainWindowViewModel)?.Navigate(MainPanel.NewProject);
+    private async void NewProject_Click(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCreate) return;
+        viewModel.Navigate(MainPanel.Projects);
+        viewModel.NewName = "";
+        var name = new TextBox { Watermark = "Example: Documents" };
+        AutomationProperties.SetName(name, "Project name");
+        name.Bind(TextBox.TextProperty, new Binding(nameof(MainWindowViewModel.NewName)) { Mode = BindingMode.TwoWay });
+        var error = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        error.Classes.Add("error");
+        var create = new Button { Content = "Create project" };
+        create.Classes.Add("primary");
+        var cancel = new Button { Content = "Cancel" };
+        var choices = new WrapPanel { Orientation = Orientation.Horizontal };
+        create.Margin = new Thickness(0, 0, 12, 0);
+        choices.Children.Add(create);
+        choices.Children.Add(cancel);
+        var content = new StackPanel { Spacing = 16, Margin = (Thickness)Application.Current!.FindResource("ModalPadding")! };
+        var title = new TextBlock { Text = "New project" };
+        title.Classes.Add("modal-title");
+        content.Children.Add(new PathIcon { Data = (Geometry)Application.Current!.FindResource("ProjectIcon")!, HorizontalAlignment = HorizontalAlignment.Left, Width = 32, Height = 32 });
+        content.Children.Add(title);
+        content.Children.Add(new TextBlock { Text = "Project name" });
+        content.Children.Add(name);
+        content.Children.Add(new TextBlock { Text = "Create a project, then open it to add files and folders." });
+        content.Children.Add(error);
+        content.Children.Add(choices);
+        var modal = new Window
+        {
+            Title = "New project", Width = Math.Min(520, ClientSize.Width - 48),
+            MaxHeight = Math.Max(300, ClientSize.Height - 48), SizeToContent = SizeToContent.Height,
+            CanResize = false, WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            DataContext = viewModel, Content = new ScrollViewer { Content = content }
+        };
+        modal.Opened += (_, _) => name.Focus();
+        modal.Closing += (_, eventArgs) => eventArgs.Cancel = viewModel.IsBusy;
+        modal.KeyDown += (_, eventArgs) =>
+        {
+            if (eventArgs.Key == Key.Escape && !viewModel.IsBusy) { modal.Close(); eventArgs.Handled = true; }
+        };
+        cancel.Click += (_, _) => { if (!viewModel.IsBusy) modal.Close(); };
+        create.Click += async (_, _) =>
+        {
+            if (!viewModel.CanCreate) return;
+            create.IsEnabled = cancel.IsEnabled = name.IsEnabled = false;
+            await viewModel.Create();
+            if (viewModel.MessageSuccess) modal.Close();
+            else
+            {
+                error.Text = viewModel.StatusMessage;
+                create.IsEnabled = viewModel.CanCreate;
+                cancel.IsEnabled = name.IsEnabled = true;
+                name.Focus();
+            }
+        };
+        await modal.ShowDialog(this);
+    }
 
     private void Projects_Click(object? sender, RoutedEventArgs args) =>
         (DataContext as MainWindowViewModel)?.Navigate(MainPanel.Projects);
 
-    private void Create_Click(object? sender, RoutedEventArgs args) =>
-        (DataContext as MainWindowViewModel)?.Create();
+    private void OpenSelected_Click(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is MainWindowViewModel { Selected: { } project } viewModel)
+            viewModel.Open(project);
+    }
+
+    private void UpdateProjectLayout()
+    {
+        var width = ClientSize.Width;
+        var sidebarWidth = width < 800 ? 180 : 208;
+        var padding = width < 800 ? 16 : 24;
+        var wide = width >= 1120 && width - sidebarWidth - 2 * padding >= 784;
+        Shell.ColumnDefinitions = new ColumnDefinitions($"{sidebarWidth},*");
+        MainContent.Margin = new Thickness(padding);
+        ProjectLayout.ColumnDefinitions = new ColumnDefinitions(wide ? "440*,320*" : "*");
+        ProjectLayout.RowDefinitions = new RowDefinitions(wide ? "Auto" : "Auto,Auto");
+        ProjectLayout.ColumnSpacing = wide ? 24 : 0;
+        Grid.SetColumn(ProjectSummary, wide ? 1 : 0);
+        Grid.SetRow(ProjectSummary, wide ? 0 : 1);
+    }
 
     private void Rename_Click(object? sender, RoutedEventArgs args) =>
         (DataContext as MainWindowViewModel)?.Rename();
@@ -229,6 +355,12 @@ public partial class MainWindow : Window
     {
         if (sender is Button { DataContext: Project project })
             (DataContext as MainWindowViewModel)?.Open(project);
+    }
+
+    private void ItemIcon_Loaded(object? sender, RoutedEventArgs args)
+    {
+        if (sender is PathIcon { DataContext: SelectedItem item } icon)
+            icon.Data = (Geometry)Application.Current!.FindResource(item.Type == ItemType.Folder ? "FolderIcon" : "FileIcon")!;
     }
 
     private void Remove_Click(object? sender, RoutedEventArgs args)
@@ -242,7 +374,7 @@ public partial class MainWindow : Window
         if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCopy) return;
         var project = viewModel.Selected!;
         var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        var content = new StackPanel { Spacing = 18, Margin = new Avalonia.Thickness(24) };
+        var content = new StackPanel { Spacing = 16, Margin = (Thickness)Application.Current!.FindResource("ModalPadding")! };
         content.Children.Add(new TextBlock
         {
             Text = $"Deactivate {project.Name}? It will leave the project list. Registered items, its reserved name and backups will be preserved. You can reactivate it in Settings.",
@@ -255,6 +387,7 @@ public partial class MainWindow : Window
             CanResize = false, WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = content
         };
         var confirm = new Button { Content = "Deactivate" };
+        confirm.Classes.Add("danger");
         var back = new Button { Content = "Back" };
         confirm.Click += (_, _) => modal.Close(true);
         back.Click += (_, _) => modal.Close(false);
@@ -278,7 +411,7 @@ public partial class MainWindow : Window
 
     private async Task SelectItems(ItemType type)
     {
-        if (DataContext is not MainWindowViewModel viewModel || viewModel.Selected is not { } project) return;
+        if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCopy || viewModel.Selected is not { } project) return;
         try
         {
             if (type == ItemType.File && !StorageProvider.CanOpen || type == ItemType.Folder && !StorageProvider.CanPickFolder)
