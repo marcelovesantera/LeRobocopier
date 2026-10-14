@@ -8,6 +8,7 @@ Implemented features:
 - Active project cards with single selection.
 - Deactivate a project after confirmation, preserving its identity, registered items and backups; reactivate it in Settings.
 - Open project editor with native file and folder pickers, item types and full paths.
+- Rename a project and its existing backup folder, preserving its identity, selection, registered items and active state; reject occupied destinations without merging.
 - Add and remove items with automatic saving; removal preserves original files and backups.
 - Reject duplicate items, overlapping folders and selections that match, contain or are inside the backup root.
 - Settings panel showing the backup root and confirmation preferences.
@@ -29,6 +30,8 @@ The backup root is displayed for reference. During Copy, Move and Restore, the o
 A folder is registered as a single item: its contents are determined at the time of the operation. Returning from the editor keeps the project selected.
 
 Configuration location: `%LOCALAPPDATA%\LeRobocopier\settings.xml` on Windows; `$XDG_CONFIG_HOME/LeRobocopier/settings.xml` on Linux, falling back to `~/.config` when XDG is missing, empty or relative. The default backup root is `LeRobocopier/Backups` inside the user's home folder. The XML file is created when a project or confirmation preference is first saved. An unreadable file must be corrected before restarting the application. Existing version-1 XML names are preserved for compatibility.
+
+Rename moves an existing backup through a temporary sibling folder and records the pending change beside the configuration. After an interruption, startup uses the persisted project name to recover the folder. Ambiguous or inaccessible recovery blocks changes and reports the preserved candidate paths. A project without a backup is renamed without creating a backup folder. External filesystem changes and power loss are not covered by an atomic transaction.
 
 Copy and Restore preserve modification times, common file attributes and Linux permissions, including executable bits. They do not replicate ownership or ACLs. Both revalidate the inventory before writing; when Restore confirmation is enabled, a new overwrite requires preparing again. External programs can still change files; reported failures do not roll back completed replacements. Linux file-type validation uses `statx` to reject special files as well as symbolic links.
 

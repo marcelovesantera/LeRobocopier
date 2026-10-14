@@ -12,6 +12,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private MainPanel panel = MainPanel.Projects;
     private string message = "";
     private string newName = "";
+    private string renameName = "";
     private Project? selected;
     private bool isBusy;
 
@@ -61,7 +62,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             Notify();
         }
     }
-    public bool CanCreate => registry is not null && !IsBusy;
+    public bool CanCreate => registry is not null && !registry.RequiresRenameRecovery && !IsBusy;
     public bool CanCopy => CanCreate && Selected is not null;
     public bool CanRestore => CanCopy;
     public bool IsBusy
@@ -85,6 +86,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public bool NoProjects => Projects.Count == 0;
     public string Message { get => message; private set { message = value; Notify(); } }
     public string NewName { get => newName; set { newName = value; Notify(); } }
+    public string RenameName { get => renameName; set { renameName = value; Notify(); } }
     public Project? Selected
     {
         get => selected;
@@ -92,6 +94,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         {
             // Keep an active selection on repeated clicks; allow it to clear after deactivation.
             selected = value ?? Projects.FirstOrDefault(project => project.Id == selected?.Id);
+            RenameName = selected?.Name ?? "";
             Notify();
             Notify(nameof(Selection));
             Notify(nameof(Items));
@@ -158,6 +161,27 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public void ReportError(string error) => Message = error;
+
+    public void Rename()
+    {
+        if (registry is null || Selected is null || !CanCopy) return;
+        var projectId = Selected.Id;
+        try
+        {
+            UpdateProject(registry.Rename(projectId, RenameName));
+            Message = "Project renamed. Registered items and backup files were preserved.";
+        }
+        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            // Recovery may discover that replacement completed before reporting a disk error.
+            var current = registry.State.Projects.First(project => project.Id == projectId);
+            if (current != Selected) UpdateProject(current);
+            Message = error.Message;
+        }
+        Notify(nameof(CanCreate));
+        Notify(nameof(CanCopy));
+        Notify(nameof(CanRestore));
+    }
 
     public void SetProjectActive(Guid projectId, bool active)
     {
