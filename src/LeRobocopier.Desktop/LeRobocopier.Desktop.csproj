@@ -1,11 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <ApplicationIcon>Assets/lerobocopier.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationManifest Condition="'$(RuntimeIdentifier)' == 'win-x64'">../../LeRobocopier.Windows.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <AvaloniaResource Include="Assets/lerobocopier-small-icon.png" />
+    <AvaloniaResource Include="Assets/lerobocopier-app-initializing-screen.png" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.13" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.13" />
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
     <ProjectReference Include="../LeRobocopier.Core/LeRobocopier.Core.csproj" />
   </ItemGroup>
 </Project>
