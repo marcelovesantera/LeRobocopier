@@ -2,9 +2,14 @@ namespace LeRobocopier.Core;
 
 public enum ItemType { File, Folder }
 
+public enum ProjectOperation { Copy, Move, Restore }
+
 public sealed record SelectedItem(ItemType Type, string Path);
 
-public sealed record Project(Guid Id, string Name, bool Active, IReadOnlyList<SelectedItem> Items);
+public sealed record Project(Guid Id, string Name, bool Active, IReadOnlyList<SelectedItem> Items)
+{
+    public ProjectOperation? LastOperation { get; init; }
+}
 
 public sealed record Confirmations(bool Copy = true, bool Move = true, bool Restore = true);
 

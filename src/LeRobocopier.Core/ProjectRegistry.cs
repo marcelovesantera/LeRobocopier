@@ -418,7 +418,14 @@ public sealed partial class ProjectRegistry : IDisposable
             Directory.CreateDirectory(Path.GetDirectoryName(file)!);
             var projectsXml = new XElement("Projetos", proposal.Projects.Select(project => new XElement("Projeto",
                 new XAttribute("id", project.Id), new XAttribute("nome", project.Name),
-                new XAttribute("ativo", project.Active), new XElement("Itens", project.Items.Select(item =>
+                new XAttribute("ativo", project.Active), project.LastOperation is null ? null :
+                    new XAttribute("ultimoProcesso", project.LastOperation switch
+                    {
+                        ProjectOperation.Copy => "Copiar",
+                        ProjectOperation.Move => "Mover",
+                        ProjectOperation.Restore => "Restaurar",
+                        _ => throw new InvalidOperationException("Unknown last operation.")
+                    }), new XElement("Itens", project.Items.Select(item =>
                     new XElement("Item", new XAttribute("tipo", item.Type == ItemType.File ? "Arquivo" : "Pasta"),
                         new XAttribute("caminho", item.Path)))))));
             var xml = new XDocument(new XElement("Configuracao",
@@ -472,7 +479,16 @@ public sealed partial class ProjectRegistry : IDisposable
         foreach (var node in projectsXml.Elements())
         {
             if (node.Name != "Projeto") throw new InvalidDataException("Unknown project record.");
-            ValidateStructure(node, ["id", "nome", "ativo"], ["Itens"]);
+            ValidateStructure(node, node.Attribute("ultimoProcesso") is null
+                ? ["id", "nome", "ativo"] : ["id", "nome", "ativo", "ultimoProcesso"], ["Itens"]);
+            var lastOperation = (string?)node.Attribute("ultimoProcesso") switch
+            {
+                null => (ProjectOperation?)null,
+                "Copiar" => ProjectOperation.Copy,
+                "Mover" => ProjectOperation.Move,
+                "Restaurar" => ProjectOperation.Restore,
+                _ => throw new InvalidDataException("Unknown last operation.")
+            };
             var id = Guid.Parse((string?)node.Attribute("id") ?? "");
             var name = (string?)node.Attribute("nome") ?? "";
             ValidateName(name);
@@ -496,7 +512,7 @@ public sealed partial class ProjectRegistry : IDisposable
             }
             projects.Add(new Project(id, name,
                 (bool?)node.Attribute("ativo") ?? throw new InvalidDataException("Missing active flag."),
-                items.AsReadOnly()));
+                items.AsReadOnly()) { LastOperation = lastOperation });
         }
         return new Configuration(1, backupRoot, preferences, projects.AsReadOnly());
     }

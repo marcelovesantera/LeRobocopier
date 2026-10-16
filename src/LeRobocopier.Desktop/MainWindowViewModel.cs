@@ -4,7 +4,7 @@ using LeRobocopier.Core;
 
 namespace LeRobocopier.Desktop;
 
-public enum MainPanel { Projects, Settings, NewProject, Editor }
+public enum MainPanel { Projects, Settings, Editor }
 
 public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 {
@@ -15,6 +15,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private string renameName = "";
     private Project? selected;
     private bool isBusy;
+    private bool messageError;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public IReadOnlyList<Project> Projects => registry?.State.Projects.Where(project => project.Active).ToArray()
@@ -22,16 +23,18 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public IReadOnlyList<Project> InactiveProjects => registry?.State.Projects.Where(project => !project.Active).ToArray()
         ?? Array.Empty<Project>();
     public bool NoInactiveProjects => InactiveProjects.Count == 0;
+    public bool HasInactiveProjects => !NoInactiveProjects;
     public string BackupRoot => registry?.State.BackupRoot ?? "Unavailable";
     public bool ConfirmCopy
     {
         get => registry?.State.Confirmations.Copy ?? true;
         set
         {
+            if (!CanCreate) return;
             try { registry?.SetCopyConfirmation(value); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                Message = error.Message;
+                ReportError(error.Message);
             }
             Notify();
         }
@@ -41,10 +44,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         get => registry?.State.Confirmations.Move ?? true;
         set
         {
+            if (!CanCreate) return;
             try { registry?.SetMoveConfirmation(value); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                Message = error.Message;
+                ReportError(error.Message);
             }
             Notify();
         }
@@ -54,10 +58,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         get => registry?.State.Confirmations.Restore ?? true;
         set
         {
+            if (!CanCreate) return;
             try { registry?.SetRestoreConfirmation(value); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                Message = error.Message;
+                ReportError(error.Message);
             }
             Notify();
         }
@@ -72,19 +77,45 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         {
             isBusy = value;
             Notify();
+            Notify(nameof(CanNavigate));
             Notify(nameof(CanCreate));
             Notify(nameof(CanCopy));
             Notify(nameof(CanRestore));
+            Notify(nameof(NoProjects));
         }
     }
+    public bool CanNavigate => !IsBusy;
+    public bool ProjectsNavigationSelected => !ShowSettings;
+    public bool HasSelection => Selected is not null;
+    public bool NoSelection => !HasSelection;
+    public bool NoItems => Items.Count == 0;
+    public bool HasItems => !NoItems;
+    public bool HasProjects => Projects.Count > 0;
+    public bool HasMessage => Message.Length > 0;
+    public bool MessageError => messageError;
+    public bool MessageSuccess => !messageError;
+    public string StatusMessage => (MessageError ? "\u2717 Error: " : "\u2713 ") + Message;
     public bool ShowProjects => panel == MainPanel.Projects;
     public bool ShowSettings => panel == MainPanel.Settings;
-    public bool ShowNewProject => panel == MainPanel.NewProject;
     public bool ShowEditor => panel == MainPanel.Editor;
     public IReadOnlyList<SelectedItem> Items => Selected?.Items ?? Array.Empty<SelectedItem>();
     public string ProjectName => Selected?.Name ?? "";
-    public bool NoProjects => Projects.Count == 0;
-    public string Message { get => message; private set { message = value; Notify(); } }
+    public string ProjectBackupFolder => Selected is null ? "" : Path.Combine(BackupRoot, Selected.Name);
+    public bool NoProjects => CanCreate && Projects.Count == 0;
+    public string Message
+    {
+        get => message;
+        private set
+        {
+            message = value;
+            messageError = false;
+            Notify();
+            Notify(nameof(HasMessage));
+            Notify(nameof(MessageError));
+            Notify(nameof(MessageSuccess));
+            Notify(nameof(StatusMessage));
+        }
+    }
     public string NewName { get => newName; set { newName = value; Notify(); } }
     public string RenameName { get => renameName; set { renameName = value; Notify(); } }
     public Project? Selected
@@ -96,21 +127,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             selected = value ?? Projects.FirstOrDefault(project => project.Id == selected?.Id);
             RenameName = selected?.Name ?? "";
             Notify();
-            Notify(nameof(Selection));
+            Notify(nameof(HasSelection));
+            Notify(nameof(NoSelection));
+            Notify(nameof(NoItems));
+            Notify(nameof(HasItems));
             Notify(nameof(Items));
             Notify(nameof(ProjectName));
+            Notify(nameof(ProjectBackupFolder));
             Notify(nameof(CanCopy));
             Notify(nameof(CanRestore));
         }
     }
-    public string Selection => Selected is null ? "Select a project." : $"Selected project: {Selected.Name}";
 
     public MainWindowViewModel()
     {
         try { registry = new ProjectRegistry(UserDirectories.Configuration(), UserDirectories.BackupRoot()); }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
         {
-            Message = error.Message + " Fix the configuration and restart the application.";
+            ReportError(error.Message + " Fix the configuration and restart the application.");
         }
     }
 
@@ -120,8 +154,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         panel = destination;
         Notify(nameof(ShowProjects));
         Notify(nameof(ShowSettings));
-        Notify(nameof(ShowNewProject));
         Notify(nameof(ShowEditor));
+        Notify(nameof(ProjectsNavigationSelected));
     }
 
     public void Open(Project project)
@@ -133,34 +167,43 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public void AddItems(Guid projectId, IReadOnlyList<SelectedItem> items)
     {
-        if (registry is null) return;
+        if (!CanCreate) return;
         try
         {
-            var updated = registry.AddItems(projectId, items);
+            var updated = registry!.AddItems(projectId, items);
             UpdateProject(updated);
             Message = "Items saved.";
         }
         catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            Message = error.Message;
+            ReportError(error.Message);
         }
     }
 
     public void RemoveItem(SelectedItem item)
     {
-        if (registry is null || Selected is null) return;
+        if (!CanCopy) return;
         try
         {
-            UpdateProject(registry.RemoveItem(Selected.Id, item));
+            UpdateProject(registry!.RemoveItem(Selected!.Id, item));
             Message = "Item removed from the registry. Files were preserved.";
         }
         catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            Message = error.Message;
+            ReportError(error.Message);
         }
     }
 
-    public void ReportError(string error) => Message = error;
+    public void ReportError(string error)
+    {
+        Message = error;
+        messageError = true;
+        Notify(nameof(MessageError));
+        Notify(nameof(MessageSuccess));
+        Notify(nameof(StatusMessage));
+    }
+
+    public void ClearMessage() => Message = "";
 
     public void Rename()
     {
@@ -176,7 +219,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             // Recovery may discover that replacement completed before reporting a disk error.
             var current = registry.State.Projects.First(project => project.Id == projectId);
             if (current != Selected) UpdateProject(current);
-            Message = error.Message;
+            ReportError(error.Message);
         }
         Notify(nameof(CanCreate));
         Notify(nameof(CanCopy));
@@ -185,20 +228,22 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public void SetProjectActive(Guid projectId, bool active)
     {
-        if (registry is null) return;
+        if (!CanCreate) return;
         try
         {
-            var updated = registry.SetProjectActive(projectId, active);
+            var updated = registry!.SetProjectActive(projectId, active);
             UpdateProject(updated);
             Notify(nameof(InactiveProjects));
             Notify(nameof(NoInactiveProjects));
+            Notify(nameof(HasInactiveProjects));
             Notify(nameof(NoProjects));
+            Notify(nameof(HasProjects));
             Message = active ? "Project reactivated." : "Project deactivated. Registered items and backups were preserved.";
             if (!active && ShowEditor && Selected is null) Navigate(MainPanel.Projects);
         }
         catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            Message = error.Message;
+            ReportError(error.Message);
         }
     }
 
@@ -228,12 +273,15 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public void AbandonCopy(CopyPlan plan) => registry!.AbandonCopy(plan);
 
-    public void RefreshConfirmation()
+    public void RefreshAfterOperation()
     {
+        if (Selected is { } project && registry is not null)
+            UpdateProject(registry.State.Projects.First(current => current.Id == project.Id));
         Notify(nameof(ConfirmCopy));
         Notify(nameof(ConfirmRestore));
         Notify(nameof(ConfirmMove));
         Notify(nameof(BackupRoot));
+        Notify(nameof(ProjectBackupFolder));
     }
 
     public void Dispose() => registry?.Dispose();
@@ -243,18 +291,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         var selectedId = Selected?.Id;
         // The ListBox may clear selection when ItemsSource changes; restore it using the stable ID.
         Notify(nameof(Projects));
+        Notify(nameof(NoProjects));
+        Notify(nameof(HasProjects));
         Selected = selectedId == project.Id && project.Active ? project :
             registry!.State.Projects.FirstOrDefault(current => current.Id == selectedId && current.Active);
     }
 
-    public void Create()
+    public async Task Create()
     {
-        if (registry is null) return;
+        if (!CanCreate) return;
         try
         {
-            var project = registry.Create(NewName);
+            IsBusy = true;
+            var name = NewName;
+            var project = await Task.Run(() => registry!.Create(name));
+            IsBusy = false;
             Notify(nameof(Projects));
             Notify(nameof(NoProjects));
+            Notify(nameof(HasProjects));
             Selected = project;
             NewName = "";
             Message = "Project saved.";
@@ -263,8 +317,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException
             or System.Xml.XmlException or InvalidOperationException)
         {
-            Message = error.Message;
+            ReportError(error.Message);
         }
+        finally { IsBusy = false; }
     }
 
     private void Notify([CallerMemberName] string? name = null) =>
