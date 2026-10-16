@@ -18,18 +18,28 @@ public sealed partial class ProjectRegistry
     public CopyPreparation PrepareMigration(string backupRoot, IProgress<OperationProgress>? progress = null)
         => PrepareCopy(Guid.Empty, false, false, progress, backupRoot);
 
+    public CopyPreparation PrepareProjectMigration(Guid projectId, string? backupRoot, IProgress<OperationProgress>? progress = null)
+        => PrepareCopy(projectId, false, false, progress, backupRoot, true);
+
     private CopyPreparation PrepareCopy(Guid projectId, bool restore, bool move, IProgress<OperationProgress>? progress,
-        string? migrationRoot = null)
+        string? migrationRoot = null, bool projectMigration = false)
     {
         Guid id;
         lock (gate)
         {
             EnsureIdle();
+            if (projectMigration)
+            {
+                GetProject(projectId);
+                preparedInheritsBackupRoot = migrationRoot is null;
+                migrationRoot ??= State.BackupRoot;
+            }
+            else preparedInheritsBackupRoot = false;
             if (migrationRoot is null) GetProject(projectId);
             else
             {
                 migrationRoot = NormalizePath(migrationRoot);
-                if (ContainsPath(State.BackupRoot, migrationRoot) && ContainsPath(migrationRoot, State.BackupRoot))
+                if (!projectMigration && ContainsPath(State.BackupRoot, migrationRoot) && ContainsPath(migrationRoot, State.BackupRoot))
                     return new CopyPreparation(null, null);
             }
             id = Guid.NewGuid();
@@ -98,7 +108,10 @@ public sealed partial class ProjectRegistry
         var remaining = new HashSet<string>(pathComparer);
         var stage = OperationStage.Preparing;
         var current = "";
-        var oldRoot = State.BackupRoot;
+        var migrationProjects = plan.ProjectId == Guid.Empty
+            ? State.Projects.Where(project => project.BackupRootOverride is null).ToArray()
+            : new[] { GetProject(plan.ProjectId) };
+        var oldRoot = plan.ProjectId == Guid.Empty ? State.BackupRoot : migrationProjects[0].BackupRootOverride ?? State.BackupRoot;
         var backupRootChanged = false;
         var migrationRoot = preparedMigrationRoot;
         var stagingRoot = migration ? Path.Combine(migrationRoot!, $".lerobocopier-migration-{plan.ExecutionId:N}") : null;
@@ -106,6 +119,22 @@ public sealed partial class ProjectRegistry
         inventoryPath = null;
         try
         {
+            if (migration && pathComparer.Equals(oldRoot, migrationRoot))
+            {
+                stage = OperationStage.Saving;
+                current = file;
+                try { SaveMigrationRoot(plan.ProjectId, migrationRoot!); }
+                finally
+                {
+                    if (!RequiresConfigurationReload)
+                        backupRootChanged = State.Projects.First(project => project.Id == plan.ProjectId).BackupRootOverride ==
+                            (preparedInheritsBackupRoot ? null : migrationRoot);
+                }
+                return new CopyResult(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<OperationIssue>(), null)
+                {
+                    BackupRootChanged = true
+                };
+            }
             if (!migration)
             {
                 stage = OperationStage.Saving;
@@ -136,7 +165,7 @@ public sealed partial class ProjectRegistry
             warnings.AddRange(inventory.Warnings);
             if (migration)
             {
-                ValidateMigrationRoot(migrationRoot!);
+                ValidateMigrationRoot(migrationRoot!, plan.ProjectId);
                 inventoryPath = stagingRoot;
                 ValidateCopyPath(stagingRoot!, ItemType.Folder, true);
                 if (RenameFolderExists(stagingRoot!, false))
@@ -284,8 +313,8 @@ public sealed partial class ProjectRegistry
             if (migration)
             {
                 stage = OperationStage.Publishing;
-                ValidateMigrationRoot(migrationRoot!);
-                foreach (var project in State.Projects)
+                ValidateMigrationRoot(migrationRoot!, plan.ProjectId);
+                foreach (var project in migrationProjects)
                 {
                     var staged = Path.Combine(stagingRoot!, project.Name);
                     if (!inventory.Entries.Any(entry => pathComparer.Equals(entry.Destination, staged))) continue;
@@ -325,7 +354,7 @@ public sealed partial class ProjectRegistry
                     ValidateMoveEntry(entry, expected, authorized, children, remaining);
                 }
                 // A previously absent project folder may have appeared while other projects were copied.
-                foreach (var project in State.Projects)
+                foreach (var project in migrationProjects)
                 {
                     var source = Path.Combine(oldRoot, project.Name);
                     if (!authorized.ContainsKey(source) && RenameFolderExists(source, false))
@@ -340,7 +369,7 @@ public sealed partial class ProjectRegistry
                 var configurationExisted = RenameFolderExists(file, false);
                 try
                 {
-                    Save(State with { BackupRoot = migrationRoot! });
+                    SaveMigrationRoot(plan.ProjectId, migrationRoot!);
                     backupRootChanged = true;
                 }
                 catch (Exception saveError)
@@ -350,7 +379,9 @@ public sealed partial class ProjectRegistry
                         // Replacement can finish before an I/O callback reports failure. Follow the disk decision.
                         try { ReloadSavedConfiguration(); }
                         catch (FileNotFoundException) when (!configurationExisted) { }
-                        backupRootChanged = pathComparer.Equals(State.BackupRoot, migrationRoot);
+                        backupRootChanged = plan.ProjectId == Guid.Empty ? pathComparer.Equals(State.BackupRoot, migrationRoot) :
+                            State.Projects.First(project => project.Id == plan.ProjectId).BackupRootOverride ==
+                                (preparedInheritsBackupRoot ? null : migrationRoot);
                     }
                     catch (Exception reloadError)
                     {
@@ -426,6 +457,7 @@ public sealed partial class ProjectRegistry
     private bool restoreOperation;
     private bool moveOperation;
     private string? preparedMigrationRoot;
+    private bool preparedInheritsBackupRoot;
     private IReadOnlyList<string> preparedOverwrites = Array.Empty<string>();
 
     private CopyPlan InventoryCopy(Guid id, Guid projectId, bool restore, bool move, IProgress<OperationProgress>? progress,
@@ -435,22 +467,29 @@ public sealed partial class ProjectRegistry
         var entries = new List<CopyEntry>();
         var warnings = new List<OperationIssue>();
         var overwrites = new List<string>();
-        if (migrationRoot is not null) ValidateMigrationRoot(migrationRoot);
-        foreach (var project in migrationRoot is null ? [GetProject(projectId)] : State.Projects)
+        if (migrationRoot is not null) ValidateMigrationRoot(migrationRoot, projectId);
+        foreach (var project in migrationRoot is null || projectId != Guid.Empty ? [GetProject(projectId)] :
+            State.Projects.Where(project => project.BackupRootOverride is null))
         {
-            var destinationRoot = NormalizePath(Path.Combine(stagingRoot ?? migrationRoot ?? State.BackupRoot, project.Name));
+            ValidateProjectPaths(project, State);
+            var projectRoot = project.BackupRootOverride ?? State.BackupRoot;
+            if (migrationRoot is not null && ContainsPath(projectRoot, migrationRoot) && ContainsPath(migrationRoot, projectRoot)) continue;
+            var destinationRoot = NormalizePath(Path.Combine(stagingRoot ?? migrationRoot ?? projectRoot, project.Name));
             inventoryPath = destinationRoot;
             ValidateCopyPath(destinationRoot, ItemType.Folder, true);
             foreach (var selected in migrationRoot is null ? project.Items :
-                [new SelectedItem(ItemType.Folder, Path.Combine(State.BackupRoot, project.Name))])
+                [new SelectedItem(ItemType.Folder, Path.Combine(projectRoot, project.Name))])
             {
                 var original = NormalizePath(selected.Path);
+                if (migrationRoot is null && project.SourceRoot is not null && !ContainsPath(project.SourceRoot, original))
+                    throw new IOException("A registered item is outside its project's source folder.");
                 var root = Path.GetPathRoot(original)!;
                 var rootName = OperatingSystem.IsWindows()
                     ? Path.Combine("UNC", root.Trim(Path.DirectorySeparatorChar)) : "root";
                 if (OperatingSystem.IsWindows() && root.Length == 3 && root[1] == ':') rootName = root[..1];
-                var backup = migrationRoot is not null ? destinationRoot :
-                    NormalizePath(Path.Combine(destinationRoot, rootName, original[root.Length..]));
+                var backup = migrationRoot is not null ? destinationRoot : project.SourceRoot is not null
+                    ? NormalizePath(Path.Combine(destinationRoot, Path.GetRelativePath(project.SourceRoot, original)))
+                    : NormalizePath(Path.Combine(destinationRoot, rootName, original[root.Length..]));
                 if (!ContainsPath(destinationRoot, backup)) throw new IOException($"Invalid mapped destination: {backup}");
                 var selectedSource = restore ? backup : original;
                 inventoryPath = selectedSource;
@@ -514,17 +553,48 @@ public sealed partial class ProjectRegistry
         return new CopyPlan(id, projectId, entries.AsReadOnly(), warnings.AsReadOnly(), restore, overwrites.AsReadOnly(), move, migrationRoot);
     }
 
-    private void ValidateMigrationRoot(string migrationRoot)
+    private void SaveMigrationRoot(Guid projectId, string migrationRoot)
+    {
+        var configurationExisted = RenameFolderExists(file, false);
+        try
+        {
+            Save(projectId == Guid.Empty ? State with { BackupRoot = migrationRoot } : State with
+            {
+                Projects = Array.AsReadOnly(State.Projects.Select(project => project.Id == projectId
+                    ? project with { BackupRootOverride = preparedInheritsBackupRoot ? null : migrationRoot } : project).ToArray())
+            });
+        }
+        catch
+        {
+            try { ReloadSavedConfiguration(); }
+            catch (FileNotFoundException) when (!configurationExisted) { }
+            catch { RequiresConfigurationReload = true; }
+            throw;
+        }
+    }
+
+    private void ValidateMigrationRoot(string migrationRoot, Guid projectId)
     {
         inventoryPath = migrationRoot;
-        if (ContainsPath(State.BackupRoot, migrationRoot) || ContainsPath(migrationRoot, State.BackupRoot))
+        var oldRoot = projectId == Guid.Empty ? State.BackupRoot : GetProject(projectId).BackupRootOverride ?? State.BackupRoot;
+        if (ContainsPath(oldRoot, migrationRoot) && ContainsPath(migrationRoot, oldRoot)) return;
+        if (ContainsPath(oldRoot, migrationRoot) || ContainsPath(migrationRoot, oldRoot))
             throw new ArgumentException("The old and new backup roots must not contain each other.");
-        ValidateCopyPath(State.BackupRoot, ItemType.Folder, true);
+        ValidateCopyPath(oldRoot, ItemType.Folder, true);
         ValidateCopyPath(migrationRoot, ItemType.Folder, true);
-        foreach (var project in State.Projects)
+        var proposal = projectId == Guid.Empty ? State with { BackupRoot = migrationRoot } : State with
         {
-            foreach (var item in project.Items) ValidateItem(item, Array.Empty<SelectedItem>(), migrationRoot);
+            Projects = Array.AsReadOnly(State.Projects.Select(project => project.Id == projectId
+                ? project with { BackupRootOverride = migrationRoot } : project).ToArray())
+        };
+        foreach (var project in proposal.Projects) ValidateProjectPaths(project, proposal);
+        foreach (var project in projectId == Guid.Empty ? State.Projects.Where(project => project.BackupRootOverride is null) : [GetProject(projectId)])
+        {
             var destination = Path.Combine(migrationRoot, project.Name);
+            var source = Path.Combine(oldRoot, project.Name);
+            if (ContainsPath(source, file) || ContainsPath(source, file + ".lock") ||
+                ContainsPath(destination, file) || ContainsPath(destination, file + ".lock"))
+                throw new IOException("The configuration and its lock must be outside project backups.");
             inventoryPath = destination;
             ValidateCopyPath(destination, ItemType.Folder, true);
             if (RenameFolderExists(destination, false))
