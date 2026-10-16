@@ -30,5 +30,3 @@ Rename projects as your work evolves. Set inactive projects aside while keeping 
 This project is licensed under the **MIT License**.
 
 You are free to use, modify, and distribute this software, including for commercial purposes, as long as the original copyright notice and license are included.
-
-See the [LICENSE](LICENSE) file for more details.
