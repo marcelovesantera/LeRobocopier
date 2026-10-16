@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Le Robocopier</title>
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#16334a"/>
+  <path d="M24 38h30l10 12h40v48H24z" fill="#5ac8df"/>
+  <path d="M44 73a22 22 0 1 1 9 18" fill="none" stroke="#fff" stroke-width="8"/>
+  <path d="M35 66l10 16 13-14" fill="none" stroke="#fff" stroke-width="7" stroke-linejoin="round"/>
+</svg>
