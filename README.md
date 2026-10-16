@@ -23,3 +23,12 @@ Follow each operation's progress and review its results, so you can see what hap
 Rename projects as your work evolves. Set inactive projects aside while keeping their backups, and bring them back when you need them. Change your backup location from Settings to keep your workspace aligned with the way you work.
 
 **Bring order to your backups. Get back to your projects.**
+
+
+## License
+
+This project is licensed under the **MIT License**.
+
+You are free to use, modify, and distribute this software, including for commercial purposes, as long as the original copyright notice and license are included.
+
+See the [LICENSE](LICENSE) file for more details.
