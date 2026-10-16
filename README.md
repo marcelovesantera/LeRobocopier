@@ -1,19 +1,25 @@
+﻿![Le Robocopier project workspace](assets/lerobocopier-repo-readme-screen.png)
+
 # Le Robocopier
 
-Le Robocopier is a desktop application for organizing backup projects on Windows and Linux. It gives each project a name and a place in a simple visual workspace, helping you keep different areas of your work organized.
+**Your projects. Your files. Everything in its place.**
 
-## A workspace for your projects
+Le Robocopier brings your backups into one clear, organized workspace. Keep work documents, personal files, and client projects grouped by what matters to you, with a dedicated backup for each project.
 
-Create named projects for areas such as documents, personal work, or client projects. Each active project appears as a card, and you can select one project at a time. Your project list is saved automatically and remains available when you reopen the application.
+## Make room for what matters
 
-The Settings panel shows the backup location and confirmation preferences in one place. Project names are checked to prevent empty, invalid, or duplicate entries.
+Choose the files and folders that belong together, give your project a name, and keep it within easy reach. A clean layout helps you find your projects and focus on the task at hand.
 
-## Current availability
+## Copy, move, restore
 
-This early version supports project creation, automatic saving, and project selection. The backup location and confirmation preferences are available for viewing.
+- **Copy** your project's files to its backup while keeping the originals where they are.
+- **Move** files into the backup, freeing their original location after the copies have been checked.
+- **Restore** backed-up items to their original locations when you need them again.
 
-File and folder selection, Copy, Move, and Restore are not available in this version. Creating a project does not copy, move, or back up any files.
+Follow each operation's progress and review its results, so you can see what happened to your files.
 
-## Care for your project list
+## A workspace that grows with you
 
-If saving fails, Le Robocopier preserves the previously saved project list. If existing settings cannot be read, it blocks changes and displays an error instead of replacing them.
+Rename projects as your work evolves. Set inactive projects aside while keeping their backups, and bring them back when you need them. Change your backup location from Settings to keep your workspace aligned with the way you work.
+
+**Bring order to your backups. Get back to your projects.**
