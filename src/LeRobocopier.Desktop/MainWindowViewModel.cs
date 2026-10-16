@@ -307,6 +307,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
         catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {
+            if (registry?.State.Projects.FirstOrDefault(project => project.Id == projectId) is { } current)
+                UpdateProject(current);
             ReportError(error.Message);
         }
         finally { IsBusy = false; }

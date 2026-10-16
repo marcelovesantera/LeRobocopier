@@ -149,14 +149,27 @@ public sealed partial class ProjectRegistry : IDisposable
                 ValidateCopyPath(item.Path, item.Type, true);
                 items.Add(item);
             }
-            Save(State with { Projects = Array.AsReadOnly(State.Projects.Select(current => current.Id == projectId ? updated : current).ToArray()) });
+            try
+            {
+                Save(State with { Projects = Array.AsReadOnly(State.Projects.Select(current => current.Id == projectId ? updated : current).ToArray()) });
+            }
+            catch
+            {
+                try { ReloadSavedConfiguration(); }
+                catch { RequiresConfigurationReload = true; }
+                throw;
+            }
             return updated;
         }
     }
 
     private static void ValidateProjectPaths(Project project, Configuration configuration)
     {
-        var backup = NormalizePath(Path.Combine(project.BackupRootOverride ?? configuration.BackupRoot, project.Name));
+        var backupRoot = project.BackupRootOverride ?? configuration.BackupRoot;
+        if (project.SourceRoot is { } sourceRoot)
+            ValidateItem(new SelectedItem(ItemType.Folder, sourceRoot), Array.Empty<SelectedItem>(), backupRoot);
+        foreach (var item in project.Items) ValidateItem(item, Array.Empty<SelectedItem>(), backupRoot);
+        var backup = NormalizePath(Path.Combine(backupRoot, project.Name));
         foreach (var registered in configuration.Projects.Where(current => current.Id != project.Id).Append(project))
         {
             if (registered.SourceRoot is { } source && (ContainsPath(source, backup) || ContainsPath(backup, source)))
@@ -796,7 +809,7 @@ public sealed partial class ProjectRegistry : IDisposable
             string[] reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
             if (name.EndsWith('.') || name.Length > 255 || reserved.Contains(stem, StringComparer.OrdinalIgnoreCase) ||
                 (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) ||
-                    stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && "123456789Â¹Â²Â³".Contains(stem[3])))
+                    stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && "123456789¹²³".Contains(stem[3])))
                 throw new ArgumentException("This name is reserved or invalid for a subfolder on Windows.", nameof(name));
         }
         else if (System.Text.Encoding.UTF8.GetByteCount(name) > 255)

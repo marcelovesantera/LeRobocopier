@@ -123,7 +123,13 @@ public sealed partial class ProjectRegistry
             {
                 stage = OperationStage.Saving;
                 current = file;
-                SaveMigrationRoot(plan.ProjectId, migrationRoot!);
+                try { SaveMigrationRoot(plan.ProjectId, migrationRoot!); }
+                finally
+                {
+                    if (!RequiresConfigurationReload)
+                        backupRootChanged = State.Projects.First(project => project.Id == plan.ProjectId).BackupRootOverride ==
+                            (preparedInheritsBackupRoot ? null : migrationRoot);
+                }
                 return new CopyResult(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<OperationIssue>(), null)
                 {
                     BackupRootChanged = true
