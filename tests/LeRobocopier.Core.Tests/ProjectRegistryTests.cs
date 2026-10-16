@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Xml.Linq;
 using LeRobocopier.Core;
 using Xunit;
@@ -530,6 +531,7 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         Assert.False(Directory.Exists(BackupRoot));
         Assert.Equal("preserve", File.ReadAllText(source));
         Assert.Equal(operation, registry.State.Projects[0].LastOperation);
+        Assert.NotNull(registry.State.Projects[0].LastOperationStartedAt);
         Assert.Equal(operation switch
         {
             ProjectOperation.Copy => "Copiar",
@@ -743,6 +745,73 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Open_WithoutLastOperationTime_KeepsUnknownTimeThroughSave(bool hasOperation)
+    {
+        using (var registry = new ProjectRegistry(SettingsFile, BackupRoot)) registry.Create("Project", SourceRoot);
+        var xml = XDocument.Load(SettingsFile);
+        if (hasOperation) xml.Descendants("Projeto").Single().SetAttributeValue("ultimoProcesso", "Copiar");
+        xml.Save(SettingsFile);
+
+        using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+        var project = Assert.Single(reopened.State.Projects);
+        Assert.Equal(hasOperation ? ProjectOperation.Copy : (ProjectOperation?)null, project.LastOperation);
+        Assert.Null(project.LastOperationStartedAt);
+        reopened.Rename(project.Id, "Renamed");
+        Assert.Null(XDocument.Load(SettingsFile).Descendants("Projeto").Single().Attribute("ultimoProcessoEm"));
+    }
+
+    [Theory]
+    [InlineData("", true)]
+    [InlineData("not-a-date", true)]
+    [InlineData("2026-10-16", true)]
+    [InlineData("2026-10-16T12:00:00.0000000", true)]
+    [InlineData("2026-10-16T12:00:00.0000000+03:00", true)]
+    [InlineData("2026-02-30T12:00:00.0000000+00:00", true)]
+    [InlineData("2026-10-16T12:00:00.0000000+00:00", false)]
+    public void Open_WithInvalidLastOperationTime_PreservesDocumentAndReleasesLock(string timestamp, bool hasOperation)
+    {
+        using (var registry = new ProjectRegistry(SettingsFile, BackupRoot)) registry.Create("Project", SourceRoot);
+        var xml = XDocument.Load(SettingsFile);
+        var project = xml.Descendants("Projeto").Single();
+        if (hasOperation) project.SetAttributeValue("ultimoProcesso", "Copiar");
+        project.SetAttributeValue("ultimoProcessoEm", timestamp);
+        xml.Save(SettingsFile);
+        var bytes = File.ReadAllBytes(SettingsFile);
+
+        Assert.Throws<InvalidDataException>(() => new ProjectRegistry(SettingsFile, BackupRoot));
+        Assert.Equal(bytes, File.ReadAllBytes(SettingsFile));
+        using var releasedLock = new FileStream(SettingsFile + ".lock", FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    }
+
+    [Fact]
+    public void Delete_WhenSavedStartTimeChanges_PreservesBackupAndBlocksMutations()
+    {
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        var project = registry.Create("Project", SourceRoot);
+        Assert.Null(registry.Copy(Assert.IsType<CopyPlan>(registry.PrepareCopy(project.Id).Plan)).Failure);
+        registry.SetProjectActive(project.Id, false);
+        var startedAt = Assert.IsType<DateTimeOffset>(registry.State.Projects[0].LastOperationStartedAt);
+        var backup = Directory.CreateDirectory(Path.Combine(BackupRoot, project.Name)).FullName;
+        var extra = Path.Combine(backup, "extra.txt");
+        File.WriteAllText(extra, "preserve");
+        var xml = XDocument.Load(SettingsFile);
+        xml.Descendants("Projeto").Single().SetAttributeValue("ultimoProcessoEm", startedAt.AddSeconds(1).ToString("O", CultureInfo.InvariantCulture));
+        xml.Save(SettingsFile);
+        var bytes = File.ReadAllBytes(SettingsFile);
+
+        var result = registry.Delete(project.Id);
+        Assert.Equal(OperationStage.Saving, result.Failure!.Stage);
+        Assert.Empty(result.RemovedPaths);
+        Assert.Equal("preserve", File.ReadAllText(extra));
+        Assert.Equal(bytes, File.ReadAllBytes(SettingsFile));
+        Assert.Equal(startedAt, registry.State.Projects[0].LastOperationStartedAt);
+        Assert.True(registry.RequiresConfigurationReload);
+        Assert.Throws<InvalidOperationException>(() => registry.SetProjectActive(project.Id, true));
+    }
+
+    [Theory]
     [InlineData(ProjectOperation.Copy)]
     [InlineData(ProjectOperation.Move)]
     [InlineData(ProjectOperation.Restore)]
@@ -759,6 +828,8 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         }
         var xml = File.ReadAllBytes(SettingsFile);
         using var failure = new ProjectRegistry(SettingsFile, BackupRoot, (_, _) => throw new IOException("Simulated failure."));
+        var lastStartedAt = failure.State.Projects[0].LastOperationStartedAt;
+        Assert.NotNull(lastStartedAt);
         var plan = Assert.IsType<CopyPlan>(Prepare(failure, id, operation).Plan);
         var result = Execute(failure, plan, operation, true);
         Assert.Equal(OperationStage.Saving, result.Failure!.Stage);
@@ -767,6 +838,7 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         Assert.Equal(xml, File.ReadAllBytes(SettingsFile));
         Assert.Equal(new Confirmations(), failure.State.Confirmations);
         Assert.Equal(ProjectOperation.Copy, failure.State.Projects[0].LastOperation);
+        Assert.Equal(lastStartedAt, failure.State.Projects[0].LastOperationStartedAt);
         Assert.Equal("bytes", File.ReadAllText(file));
         Assert.Equal("bytes", File.ReadAllText(Path.Combine(BackupRoot, "Project", "data.txt")));
         failure.AbandonCopy(Assert.IsType<CopyPlan>(Prepare(failure, id, operation).Plan));
@@ -782,6 +854,7 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         File.WriteAllText(file, "bytes");
         var saves = 0;
         var observe = false;
+        DateTimeOffset? savedStartedAt = null;
         using var registry = new ProjectRegistry(SettingsFile, BackupRoot, (temporary, destination) =>
         {
             if (observe)
@@ -789,6 +862,13 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
                 saves++;
                 var xml = XDocument.Load(temporary);
                 Assert.Equal(persisted, (string?)xml.Descendants("Projeto").Single().Attribute("ultimoProcesso"));
+                savedStartedAt = DateTimeOffset.ParseExact((string)xml.Descendants("Projeto").Single().Attribute("ultimoProcessoEm")!,
+                    "O", CultureInfo.InvariantCulture);
+                Assert.Equal(TimeSpan.Zero, savedStartedAt.Value.Offset);
+                Assert.False((bool)xml.Root!.Element("Confirmacoes")!.Attribute(operation switch
+                {
+                    ProjectOperation.Copy => "copiar", ProjectOperation.Move => "mover", _ => "restaurar"
+                })!);
                 Assert.Equal("bytes", File.ReadAllText(file));
             }
             File.Move(temporary, destination, true);
@@ -798,10 +878,16 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         var abandoned = Assert.IsType<CopyPlan>(Prepare(registry, project.Id, operation).Plan);
         registry.AbandonCopy(abandoned);
         Assert.Null(registry.State.Projects[0].LastOperation);
+        Assert.Null(registry.State.Projects[0].LastOperationStartedAt);
         observe = true;
+        var before = DateTimeOffset.UtcNow;
         var result = Execute(registry, Assert.IsType<CopyPlan>(Prepare(registry, project.Id, operation).Plan), operation, true);
+        var after = DateTimeOffset.UtcNow;
         Assert.Null(result.Failure);
         Assert.Equal(1, saves);
+        var startedAt = Assert.IsType<DateTimeOffset>(registry.State.Projects[0].LastOperationStartedAt);
+        Assert.InRange(startedAt, before, after);
+        Assert.Equal(savedStartedAt, startedAt);
         Assert.Equal(operation, registry.State.Projects[0].LastOperation);
         Assert.False(operation switch
         {
@@ -812,6 +898,7 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         registry.Dispose();
         using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
         Assert.Equal(operation, reopened.State.Projects[0].LastOperation);
+        Assert.Equal(savedStartedAt, reopened.State.Projects[0].LastOperationStartedAt);
     }
 
     [Theory]
@@ -831,9 +918,11 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         Assert.Empty(result.RemovedPaths);
         Assert.False(result.Success);
         Assert.Equal(operation, registry.State.Projects[0].LastOperation);
+        var startedAt = Assert.IsType<DateTimeOffset>(registry.State.Projects[0].LastOperationStartedAt);
         Assert.Equal(operation, registry.Rename(project.Id, "Renamed").LastOperation);
         Assert.Equal(operation, registry.SetProjectActive(project.Id, false).LastOperation);
         Assert.Equal(operation, registry.SetProjectActive(project.Id, true).LastOperation);
+        Assert.Equal(startedAt, registry.State.Projects[0].LastOperationStartedAt);
         Assert.False(Directory.Exists(BackupRoot));
         registry.Dispose();
         using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
@@ -842,6 +931,7 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         Assert.Equal("Renamed", saved.Name);
         Assert.True(saved.Active);
         Assert.Equal(operation, saved.LastOperation);
+        Assert.Equal(startedAt, saved.LastOperationStartedAt);
     }
 
     [Fact]
@@ -1140,6 +1230,7 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         Assert.Equal(saved.Name, reopenedProject.Name);
         Assert.Equal(saved.Active, reopenedProject.Active);
         Assert.Equal(saved.LastOperation, reopenedProject.LastOperation);
+        Assert.Equal(saved.LastOperationStartedAt, reopenedProject.LastOperationStartedAt);
         Assert.Equal(saved.Items, reopenedProject.Items);
     }
 
@@ -1198,6 +1289,7 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
             File.WriteAllText(Path.Combine(root, project.Name, "extra.txt"), "extra");
         }
         registry.SetProjectActive(inactive.Id, false);
+        var startedTimes = registry.State.Projects.ToDictionary(project => project.Id, project => project.LastOperationStartedAt);
         var next = Path.Combine(directory, "NextBase");
         var unrelated = Path.Combine(BackupRoot, "unrelated.txt");
         File.WriteAllText(unrelated, "outside projects");
@@ -1217,6 +1309,7 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         Assert.Equal("bytes", File.ReadAllText(Path.Combine(customRoot, custom.Name, "data.txt")));
         Assert.Equal(customRoot, registry.State.Projects.Single(project => project.Id == custom.Id).BackupRootOverride);
         Assert.All(registry.State.Projects, project => Assert.Equal(ProjectOperation.Copy, project.LastOperation));
+        Assert.All(registry.State.Projects, project => Assert.Equal(startedTimes[project.Id], project.LastOperationStartedAt));
         Assert.False(registry.State.Projects.Single(project => project.Id == inactive.Id).Active);
 
         var own = Path.Combine(directory, "OwnBase");
@@ -1232,6 +1325,230 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
         Assert.Equal(next, reopened.State.BackupRoot);
         Assert.Equal(new[] { active.Id, inactive.Id, custom.Id }, reopened.State.Projects.Select(project => project.Id));
+        Assert.All(reopened.State.Projects, project => Assert.Equal(startedTimes[project.Id], project.LastOperationStartedAt));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void ProjectMigration_WithoutBackup_SavesDestinationWithoutFileEffects(bool hasItems, bool hasRecordedEmptyAttempt)
+    {
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        var project = registry.Create("Project", SourceRoot);
+        if (hasRecordedEmptyAttempt)
+            Assert.Null(registry.Copy(Assert.IsType<CopyPlan>(registry.PrepareCopy(project.Id).Plan)).Failure);
+        var lastOperation = registry.State.Projects[0].LastOperation;
+        var startedAt = registry.State.Projects[0].LastOperationStartedAt;
+        var original = Path.Combine(SourceRoot, "data.txt");
+        File.WriteAllText(original, "original bytes");
+        if (hasItems) registry.AddItems(project.Id, [new(ItemType.File, original)]);
+        var next = Path.Combine(directory, "NextBase");
+        var plan = Assert.IsType<CopyPlan>(registry.PrepareProjectMigration(project.Id, next).Plan);
+        Assert.Empty(plan.Entries);
+        Assert.Empty(plan.Warnings);
+
+        var result = registry.Migrate(plan);
+        Assert.Null(result.Failure);
+        Assert.True(result.BackupRootChanged);
+        Assert.Empty(result.WrittenPaths);
+        Assert.Empty(result.VerifiedFiles);
+        Assert.Empty(result.RemovedPaths);
+        Assert.Empty(result.Warnings);
+        Assert.Equal(next, registry.State.Projects[0].BackupRootOverride);
+        Assert.Equal(BackupRoot, registry.State.BackupRoot);
+        Assert.Equal(lastOperation, registry.State.Projects[0].LastOperation);
+        Assert.Equal(startedAt, registry.State.Projects[0].LastOperationStartedAt);
+        Assert.False(Directory.Exists(next));
+        Assert.False(Directory.Exists(BackupRoot));
+        Assert.Equal("original bytes", File.ReadAllText(original));
+        registry.AbandonCopy(Assert.IsType<CopyPlan>(registry.PrepareCopy(project.Id).Plan));
+        registry.Dispose();
+        using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+        Assert.Equal(next, reopened.State.Projects[0].BackupRootOverride);
+        Assert.Equal(project.Id, reopened.State.Projects[0].Id);
+        Assert.Equal(lastOperation, reopened.State.Projects[0].LastOperation);
+        Assert.Equal(startedAt, reopened.State.Projects[0].LastOperationStartedAt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ProjectMigration_WithManualBackupAndNoRecordedRun_InventoriesExistingBackup(bool hasFile)
+    {
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        var project = registry.Create("Project", SourceRoot);
+        var old = Directory.CreateDirectory(Path.Combine(BackupRoot, project.Name)).FullName;
+        if (hasFile) File.WriteAllText(Path.Combine(old, "manual.txt"), "manual bytes");
+        var next = Path.Combine(directory, "NextBase");
+        var plan = Assert.IsType<CopyPlan>(registry.PrepareProjectMigration(project.Id, next).Plan);
+        Assert.NotEmpty(plan.Entries);
+        Assert.Contains(plan.Entries, entry => entry.Source == old && entry.Type == ItemType.Folder);
+        Assert.Null(registry.State.Projects[0].LastOperation);
+        Assert.Null(registry.State.Projects[0].LastOperationStartedAt);
+
+        var result = registry.Migrate(plan);
+        Assert.Null(result.Failure);
+        Assert.True(Directory.Exists(Path.Combine(next, project.Name)));
+        Assert.False(Directory.Exists(old));
+        if (hasFile) Assert.Equal("manual bytes", File.ReadAllText(Path.Combine(next, project.Name, "manual.txt")));
+        Assert.Null(registry.State.Projects[0].LastOperation);
+        Assert.Null(registry.State.Projects[0].LastOperationStartedAt);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void ProjectMigration_WhenBackupAppearsAfterEmptyPreparation_RequiresNewPreparation(bool duringSavingCallback, bool replacePublicEntries)
+    {
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        var project = registry.Create("Project", SourceRoot);
+        var next = Path.Combine(directory, "NextBase");
+        var plan = Assert.IsType<CopyPlan>(registry.PrepareProjectMigration(project.Id, next).Plan);
+        Assert.Empty(plan.Entries);
+        var bytes = File.ReadAllBytes(SettingsFile);
+        var old = Path.Combine(BackupRoot, project.Name);
+        var invoked = false;
+        if (duringSavingCallback)
+            operationProgress = update =>
+            {
+                if (update.Stage != OperationStage.Saving) return;
+                invoked = true;
+                Directory.CreateDirectory(old);
+                File.WriteAllText(Path.Combine(old, "appeared.txt"), "preserve bytes");
+            };
+        else
+        {
+            Directory.CreateDirectory(old);
+            File.WriteAllText(Path.Combine(old, "appeared.txt"), "preserve bytes");
+        }
+
+        var submitted = replacePublicEntries ? plan with
+        {
+            Entries = [new CopyEntry(ItemType.Folder, old, Path.Combine(next, project.Name))]
+        } : plan;
+        var result = registry.Migrate(submitted, this);
+        Assert.Equal(OperationStage.Preparing, result.Failure!.Stage);
+        Assert.Contains("Prepare migration again", result.Failure.Message);
+        Assert.Equal(duringSavingCallback, invoked);
+        Assert.Empty(result.WrittenPaths);
+        Assert.Empty(result.RemovedPaths);
+        Assert.False(result.BackupRootChanged);
+        Assert.Equal(bytes, File.ReadAllBytes(SettingsFile));
+        Assert.Null(registry.State.Projects[0].BackupRootOverride);
+        Assert.Equal("preserve bytes", File.ReadAllText(Path.Combine(old, "appeared.txt")));
+        Assert.False(Directory.Exists(next));
+        operationProgress = null;
+        var retry = Assert.IsType<CopyPlan>(registry.PrepareProjectMigration(project.Id, next).Plan);
+        Assert.NotEmpty(retry.Entries);
+        registry.AbandonCopy(retry);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ProjectMigration_WithoutBackup_WhenSavingReportsFailure_FollowsSavedDecisionWithoutFileEffects(bool replaced)
+    {
+        var failing = false;
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot, (temporary, destination) =>
+        {
+            if (failing)
+            {
+                if (replaced) File.Move(temporary, destination, true);
+                throw new IOException("Simulated destination save failure.");
+            }
+            File.Move(temporary, destination, true);
+        });
+        var project = registry.Create("Project", SourceRoot);
+        var next = Path.Combine(directory, "NextBase");
+        var plan = Assert.IsType<CopyPlan>(registry.PrepareProjectMigration(project.Id, next).Plan);
+        var bytes = File.ReadAllBytes(SettingsFile);
+        failing = true;
+
+        var result = registry.Migrate(plan);
+        Assert.Equal(OperationStage.Saving, result.Failure!.Stage);
+        Assert.Equal(replaced, result.BackupRootChanged);
+        Assert.Equal(replaced ? next : null, registry.State.Projects[0].BackupRootOverride);
+        Assert.Empty(result.WrittenPaths);
+        Assert.Empty(result.RemovedPaths);
+        Assert.False(Directory.Exists(next));
+        Assert.False(Directory.Exists(BackupRoot));
+        Assert.False(registry.RequiresConfigurationReload);
+        if (!replaced) Assert.Equal(bytes, File.ReadAllBytes(SettingsFile));
+        Assert.Null(registry.State.Projects[0].LastOperationStartedAt);
+        registry.AbandonCopy(Assert.IsType<CopyPlan>(registry.PrepareCopy(project.Id).Plan));
+        registry.Dispose();
+        using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
+        Assert.Equal(replaced ? next : null, reopened.State.Projects[0].BackupRootOverride);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ProjectMigration_WithoutBackup_WhenDestinationIsOccupied_PreservesConfiguration(bool afterPreparation)
+    {
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        var project = registry.Create("Project", SourceRoot);
+        var next = Path.Combine(directory, "NextBase");
+        CopyPlan? plan = afterPreparation ? Assert.IsType<CopyPlan>(registry.PrepareProjectMigration(project.Id, next).Plan) : null;
+        var occupied = Directory.CreateDirectory(Path.Combine(next, project.Name)).FullName;
+        File.WriteAllText(Path.Combine(occupied, "preserve.txt"), "occupied bytes");
+        var bytes = File.ReadAllBytes(SettingsFile);
+
+        if (plan is not null)
+        {
+            var result = registry.Migrate(plan);
+            Assert.Equal(OperationStage.Preparing, result.Failure!.Stage);
+            Assert.Empty(result.WrittenPaths);
+            Assert.Empty(result.RemovedPaths);
+        }
+        else Assert.NotNull(registry.PrepareProjectMigration(project.Id, next).Failure);
+        Assert.Equal(bytes, File.ReadAllBytes(SettingsFile));
+        Assert.Null(registry.State.Projects[0].BackupRootOverride);
+        Assert.Equal("occupied bytes", File.ReadAllText(Path.Combine(occupied, "preserve.txt")));
+        registry.AbandonCopy(Assert.IsType<CopyPlan>(registry.PrepareCopy(project.Id).Plan));
+    }
+
+    [Fact]
+    public void ProjectMigration_WithSameEffectiveBase_ChangesInheritanceWithoutChangingRecordedAttempt()
+    {
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        var project = registry.Create("Project", SourceRoot);
+        Assert.Null(registry.Copy(Assert.IsType<CopyPlan>(registry.PrepareCopy(project.Id).Plan)).Failure);
+        var startedAt = registry.State.Projects[0].LastOperationStartedAt;
+        var custom = Assert.IsType<CopyPlan>(registry.PrepareProjectMigration(project.Id, BackupRoot).Plan);
+        Assert.Empty(custom.Entries);
+        Assert.Null(registry.Migrate(custom).Failure);
+        Assert.Equal(BackupRoot, registry.State.Projects[0].BackupRootOverride);
+        var inherited = Assert.IsType<CopyPlan>(registry.PrepareProjectMigration(project.Id, null).Plan);
+        Assert.Empty(inherited.Entries);
+        Assert.Null(registry.Migrate(inherited).Failure);
+        Assert.Null(registry.State.Projects[0].BackupRootOverride);
+        Assert.Equal(ProjectOperation.Copy, registry.State.Projects[0].LastOperation);
+        Assert.Equal(startedAt, registry.State.Projects[0].LastOperationStartedAt);
+        Assert.False(Directory.Exists(BackupRoot));
+        var next = Path.Combine(directory, "NextBase");
+        var missingBackup = Assert.IsType<CopyPlan>(registry.PrepareProjectMigration(project.Id, next).Plan);
+        Assert.Empty(missingBackup.Entries);
+        Assert.Null(registry.Migrate(missingBackup).Failure);
+        Assert.Equal(startedAt, registry.State.Projects[0].LastOperationStartedAt);
+        Assert.Equal(ProjectOperation.Copy, registry.State.Projects[0].LastOperation);
+        Assert.False(Directory.Exists(next));
+    }
+
+    [Fact]
+    public void GlobalMigration_WithoutBackup_PreservesMissingBackupWarning()
+    {
+        using var registry = new ProjectRegistry(SettingsFile, BackupRoot);
+        registry.Create("Project", SourceRoot);
+        var plan = Assert.IsType<CopyPlan>(registry.PrepareMigration(Path.Combine(directory, "NextBase")).Plan);
+        Assert.Empty(plan.Entries);
+        Assert.NotEmpty(plan.Warnings);
+        Assert.Equal(Guid.Empty, plan.ProjectId);
+        registry.AbandonCopy(plan);
     }
 
     [Theory]
@@ -1264,6 +1581,7 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         Assert.Equal("bytes", File.ReadAllText(Path.Combine(next, project.Name, "extra.txt")));
         Assert.Equal(replaced ? next : BackupRoot, registry.State.BackupRoot);
         Assert.Null(registry.State.Projects[0].LastOperation);
+        Assert.Null(registry.State.Projects[0].LastOperationStartedAt);
         Assert.False(registry.RequiresConfigurationReload);
         registry.Dispose();
         using var reopened = new ProjectRegistry(SettingsFile, BackupRoot);
@@ -1306,7 +1624,9 @@ public sealed class ProjectRegistryTests : IDisposable, IProgress<OperationProgr
         Assert.Null(registry.Copy(Assert.IsType<CopyPlan>(registry.PrepareCopy(project.Id).Plan)).Failure);
         var next = Directory.CreateDirectory(Path.Combine(directory, "NewSource")).FullName;
 
+        var startedAt = registry.State.Projects[0].LastOperationStartedAt;
         var changed = registry.ChangeSourceRoot(project.Id, next);
+        Assert.Equal(startedAt, changed.LastOperationStartedAt);
         var target = Path.Combine(next, "Sub", "data.txt");
         Assert.Equal(project.Id, changed.Id);
         Assert.Equal(target, Assert.Single(changed.Items).Path);

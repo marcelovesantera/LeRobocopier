@@ -9,6 +9,7 @@ public sealed record SelectedItem(ItemType Type, string Path);
 public sealed record Project(Guid Id, string Name, bool Active, IReadOnlyList<SelectedItem> Items)
 {
     public ProjectOperation? LastOperation { get; init; }
+    public DateTimeOffset? LastOperationStartedAt { get; init; }
     public string? SourceRoot { get; init; }
     public string? BackupRootOverride { get; init; }
 }

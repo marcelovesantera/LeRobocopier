@@ -48,12 +48,14 @@ public sealed partial class ProjectRegistry
             restoreOperation = restore;
             moveOperation = move;
             preparedMigrationRoot = migrationRoot;
+            preparedEmptyProjectMigration = false;
             inventoryPath = null;
         }
         try
         {
             var plan = InventoryCopy(id, projectId, restore, move, progress, migrationRoot: migrationRoot);
             preparedOverwrites = plan.Overwrites ?? Array.Empty<string>();
+            preparedEmptyProjectMigration = projectMigration && plan.Entries.Count == 0;
             return new CopyPreparation(plan, null);
         }
         catch (Exception error)
@@ -142,7 +144,8 @@ public sealed partial class ProjectRegistry
                 var project = GetProject(plan.ProjectId);
                 var updated = project with
                 {
-                    LastOperation = restore ? ProjectOperation.Restore : move ? ProjectOperation.Move : ProjectOperation.Copy
+                    LastOperation = restore ? ProjectOperation.Restore : move ? ProjectOperation.Move : ProjectOperation.Copy,
+                    LastOperationStartedAt = DateTimeOffset.UtcNow
                 };
                 var projects = Array.AsReadOnly(State.Projects.Select(currentProject =>
                     currentProject.Id == project.Id ? updated : currentProject).ToArray());
@@ -163,6 +166,36 @@ public sealed partial class ProjectRegistry
                 migrationRoot, stagingRoot);
             if (move || migration) remaining.UnionWith(inventory.Entries.Select(entry => entry.Source));
             warnings.AddRange(inventory.Warnings);
+            if (migration && preparedEmptyProjectMigration)
+            {
+                var source = Path.Combine(oldRoot, migrationProjects[0].Name);
+                inventoryPath = source;
+                if (inventory.Entries.Count > 0)
+                    throw new IOException($"A backup appeared after preparation: {source}. Prepare migration again for confirmation.");
+                progress?.Report(new OperationProgress(OperationStage.Saving, file, 0, 0));
+                ValidateMigrationRoot(migrationRoot!, plan.ProjectId);
+                inventoryPath = source;
+                ValidateCopyPath(source, ItemType.Folder, true);
+                if (RenameFolderExists(source, false))
+                {
+                    remaining.Add(source);
+                    throw new IOException($"A backup appeared after preparation: {source}. Prepare migration again for confirmation.");
+                }
+                stage = OperationStage.Saving;
+                current = file;
+                try { SaveMigrationRoot(plan.ProjectId, migrationRoot!); }
+                finally
+                {
+                    if (!RequiresConfigurationReload)
+                        backupRootChanged = State.Projects.First(project => project.Id == plan.ProjectId).BackupRootOverride ==
+                            (preparedInheritsBackupRoot ? null : migrationRoot);
+                }
+                progress?.Report(new OperationProgress(OperationStage.Completed, "", 0, 0));
+                return new CopyResult(Array.Empty<string>(), Array.Empty<string>(), warnings.AsReadOnly(), null)
+                {
+                    BackupRootChanged = backupRootChanged
+                };
+            }
             if (migration)
             {
                 ValidateMigrationRoot(migrationRoot!, plan.ProjectId);
@@ -458,6 +491,7 @@ public sealed partial class ProjectRegistry
     private bool moveOperation;
     private string? preparedMigrationRoot;
     private bool preparedInheritsBackupRoot;
+    private bool preparedEmptyProjectMigration;
     private IReadOnlyList<string> preparedOverwrites = Array.Empty<string>();
 
     private CopyPlan InventoryCopy(Guid id, Guid projectId, bool restore, bool move, IProgress<OperationProgress>? progress,
@@ -497,14 +531,16 @@ public sealed partial class ProjectRegistry
                 try { ValidateCopyPath(selectedSource, selected.Type, false); }
                 catch (FileNotFoundException)
                 {
-                    warnings.Add(new OperationIssue(OperationStage.Preparing, selectedSource,
-                        restore ? "The selected item is missing from the backup." : "The selected item is missing."));
+                    if (migrationRoot is null || projectId == Guid.Empty)
+                        warnings.Add(new OperationIssue(OperationStage.Preparing, selectedSource,
+                            restore ? "The selected item is missing from the backup." : "The selected item is missing."));
                     continue;
                 }
                 catch (DirectoryNotFoundException)
                 {
-                    warnings.Add(new OperationIssue(OperationStage.Preparing, selectedSource,
-                        restore ? "The selected item is missing from the backup." : "The selected item is missing."));
+                    if (migrationRoot is null || projectId == Guid.Empty)
+                        warnings.Add(new OperationIssue(OperationStage.Preparing, selectedSource,
+                            restore ? "The selected item is missing from the backup." : "The selected item is missing."));
                     continue;
                 }
                 var pending = new Stack<SelectedItem>();
