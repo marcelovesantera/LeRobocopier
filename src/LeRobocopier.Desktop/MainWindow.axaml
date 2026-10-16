@@ -118,7 +118,7 @@
                       <Grid ColumnDefinitions="Auto,104,*" ColumnSpacing="12">
                         <Image Source="{StaticResource MoveNavigationImage}" Width="22" Height="22" VerticalAlignment="Top"/>
                         <TextBlock Grid.Column="1" Text="Source folder" ToolTip.Tip="Source folder"/>
-                        <TextBlock Grid.Column="2" Classes="muted" Text="C:\Source\Project" ToolTip.Tip="C:\Source\Project"/>
+                        <TextBlock Grid.Column="2" Classes="muted" Text="{Binding ProjectSourceFolder}" ToolTip.Tip="{Binding ProjectSourceFolder}"/>
                       </Grid>
                       <Grid ColumnDefinitions="Auto,104,*" ColumnSpacing="12">
                         <Image Source="{StaticResource MoveNavigationImage}" Width="22" Height="22" VerticalAlignment="Top"/>
@@ -160,7 +160,7 @@
                   <Button Grid.Column="1" Content="Change backup root" Click="ChangeBackupRoot_Click" IsEnabled="{Binding CanCreate}" VerticalAlignment="Center" VerticalContentAlignment="Center"/>
                 </Grid>
                 <StackPanel Spacing="4">
-                  <TextBlock Classes="muted" Text="Changing the backup root migrates complete backups of active and inactive projects and always requires confirmation."/>
+                  <TextBlock Classes="muted" Text="Changing the default migrates complete backups of inheriting projects, including inactive projects. Custom project destinations stay unchanged."/>
                   <TextBlock Classes="muted" Text="Each process preference below applies to all projects."/>
                 </StackPanel>
                 <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"/>
@@ -206,7 +206,7 @@
                           <Image Source="{StaticResource SettingsFolderImage}" Width="28" Height="28"/>
                           <TextBlock Grid.Column="1" Text="{Binding Name}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" VerticalAlignment="Center" FontSize="16"/>
                           <Button Grid.Column="2" Content="Reactivate" Click="Reactivate_Click" AutomationProperties.Name="{Binding Name, StringFormat='Reactivate {0}'}"/>
-                          <Button Grid.Column="3" Classes="danger" Content="Delete" IsEnabled="False" ToolTip.Tip="Not available yet" ToolTip.ShowOnDisabled="True" AutomationProperties.Name="{Binding Name, StringFormat='Delete {0} (not available yet)'}"/>
+                          <Button Grid.Column="3" Classes="danger" Content="Delete" Click="Delete_Click" ToolTip.Tip="Permanently delete this inactive project and its entire backup folder. Original files are preserved." AutomationProperties.Name="{Binding Name, StringFormat='Delete {0} permanently'}"/>
                         </Grid>
                       </Border>
                     </DataTemplate>
@@ -248,6 +248,7 @@
                   <TextBlock Text="Add folders"/>
                 </StackPanel>
               </Button>
+              <Button Classes="editor-action" Content="Project folders" Click="ProjectFolders_Click" Margin="0,0,16,0"/>
               <Button Classes="editor-action" Click="Projects_Click" AutomationProperties.Name="Back to projects">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                   <Image Source="{StaticResource BackNavigationImage}" Width="22" Height="22"/>

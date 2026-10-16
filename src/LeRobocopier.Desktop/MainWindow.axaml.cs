@@ -130,15 +130,17 @@ public partial class MainWindow : Window
         if (backupRoot is not null) await RunOperation(false, migrationRoot: backupRoot);
     }
 
-    private async Task RunOperation(bool restore, bool move = false, string? migrationRoot = null)
+    private async Task RunOperation(bool restore, bool move = false, string? migrationRoot = null,
+        Guid? migrationProjectId = null, bool inheritBackupRoot = false)
     {
         var migration = migrationRoot is not null;
         if (DataContext is not MainWindowViewModel viewModel || !(migration ? viewModel.CanCreate : viewModel.CanCopy)) return;
         var operation = migration ? "Migrate backup root" : restore ? "Restore" : move ? "Move" : "Copy";
         var project = viewModel.Selected;
-        var oldRoot = viewModel.BackupRoot;
+        var oldRoot = migrationProjectId is null ? viewModel.BackupRoot : viewModel.ProjectBackupRoot;
         viewModel.IsBusy = true;
-        var (modal, stage, details, bar, summary, choices, options, report) = CreateOperationDialog(operation, migration ? "All projects" : project!.Name);
+        var (modal, stage, details, bar, summary, choices, options, report) = CreateOperationDialog(operation,
+            migration && migrationProjectId is null ? "Projects using the default destination" : project!.Name);
         var running = true;
         modal.Closing += (_, eventArgs) => eventArgs.Cancel = running;
         var modalClosed = modal.ShowDialog(this);
@@ -171,7 +173,9 @@ public partial class MainWindow : Window
         var progress = CreateProgress();
         try
         {
-            var preparation = await Task.Run(() => migration ? viewModel.PrepareMigration(migrationRoot!, progress) : restore
+            var preparation = await Task.Run(() => migration ? migrationProjectId is { } targetId
+                ? viewModel.PrepareProjectMigration(targetId, inheritBackupRoot ? null : migrationRoot, progress)
+                : viewModel.PrepareMigration(migrationRoot!, progress) : restore
                 ? viewModel.PrepareRestore(project!.Id, progress) : move
                     ? viewModel.PrepareMove(project!.Id, progress) : viewModel.PrepareCopy(project!.Id, progress));
             progressVersion++;
@@ -197,7 +201,7 @@ public partial class MainWindow : Window
                 {
                     SetOperationText(stage, "Ready for confirmation");
                     SetOperationText(details, migration
-                        ? $"Migrate {plan.Entries.Count} file(s) and folder(s) for all active and inactive projects? Complete backups, including extra files, will be copied and verified before saving the new root and removing the old copies. Unrelated files in both roots will be preserved."
+                        ? $"Migrate {plan.Entries.Count} file(s) and folder(s) for {(migrationProjectId is null ? "projects using the default destination, including inactive projects" : project!.Name)}? Complete backups, including extra files, will be copied and verified before saving the new destination and removing the old copies. Unrelated files will be preserved."
                         : $"{operation} {plan.Entries.Count} file(s) and folder(s)? " +
                         (restore ? "Corresponding originals will be replaced. Backup and extra original files will be preserved."
                             : move ? "Originals will be removed only after all copies are verified. Extra backup files will be preserved."
@@ -303,7 +307,7 @@ public partial class MainWindow : Window
                     ? result.WrittenPaths.Count > 0 || result.RemovedPaths.Count > 0 || result.BackupRootChanged ? "warning" : "error"
                     : result.Warnings.Count > 0 ? "warning" : "success");
                 if (migration)
-                    resultLines.Add($"Last known backup root: {viewModel.BackupRoot}");
+                    resultLines.Add($"Last known backup root: {(migrationProjectId is null ? viewModel.BackupRoot : viewModel.ProjectBackupRoot)}");
                 if (move || migration)
                 {
                     resultLines.Add($"Removed {(migration ? "old backup" : "original")} paths: {result.RemovedPaths.Count}");
@@ -461,6 +465,7 @@ public partial class MainWindow : Window
         if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCreate) return;
         viewModel.Navigate(MainPanel.Projects);
         viewModel.NewName = "";
+        viewModel.NewSourceRoot = "";
         var name = new TextBox { Watermark = "Example: Documents" };
         AutomationProperties.SetName(name, "Project name");
         name.Bind(TextBox.TextProperty, new Binding(nameof(MainWindowViewModel.NewName)) { Mode = BindingMode.TwoWay });
@@ -480,7 +485,17 @@ public partial class MainWindow : Window
         content.Children.Add(title);
         content.Children.Add(new TextBlock { Text = "Project name" });
         content.Children.Add(name);
-        content.Children.Add(new TextBlock { Text = "Create a project, then open it to add files and folders." });
+        var source = new TextBlock { Text = "Choose a source folder", TextWrapping = TextWrapping.NoWrap, TextTrimming = TextTrimming.CharacterEllipsis };
+        var browse = new Button { Content = "Choose source folder" };
+        content.Children.Add(new TextBlock { Text = "Source folder (required)" });
+        content.Children.Add(source);
+        content.Children.Add(browse);
+        var destination = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        void UpdateDestination() => destination.Text = $"Backup destination: {Path.Combine(viewModel.BackupRoot, viewModel.NewName)}";
+        name.TextChanged += (_, _) => UpdateDestination();
+        UpdateDestination();
+        content.Children.Add(destination);
+        content.Children.Add(new TextBlock { Text = "Only files and folders inside the source folder can be added.", TextWrapping = TextWrapping.Wrap });
         content.Children.Add(error);
         content.Children.Add(choices);
         var modal = new Window
@@ -491,6 +506,31 @@ public partial class MainWindow : Window
             DataContext = viewModel, Content = new ScrollViewer { Content = content }
         };
         modal.Opened += (_, _) => name.Focus();
+        browse.Click += async (_, _) =>
+        {
+            if (!viewModel.CanCreate) return;
+            viewModel.IsBusy = true;
+            browse.IsEnabled = create.IsEnabled = cancel.IsEnabled = false;
+            try
+            {
+                var folder = await PickFolder(modal, "Choose the project source folder");
+                if (folder is not null)
+                {
+                    viewModel.NewSourceRoot = folder;
+                    source.Text = folder;
+                    ToolTip.SetTip(source, folder);
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                error.Text = exception.Message;
+            }
+            finally
+            {
+                viewModel.IsBusy = false;
+                browse.IsEnabled = create.IsEnabled = cancel.IsEnabled = true;
+            }
+        };
         modal.Closing += (_, eventArgs) => eventArgs.Cancel = viewModel.IsBusy;
         modal.KeyDown += (_, eventArgs) =>
         {
@@ -500,14 +540,14 @@ public partial class MainWindow : Window
         create.Click += async (_, _) =>
         {
             if (!viewModel.CanCreate) return;
-            create.IsEnabled = cancel.IsEnabled = name.IsEnabled = false;
+            create.IsEnabled = cancel.IsEnabled = name.IsEnabled = browse.IsEnabled = false;
             await viewModel.Create();
             if (viewModel.MessageSuccess) modal.Close();
             else
             {
                 error.Text = viewModel.StatusMessage;
                 create.IsEnabled = viewModel.CanCreate;
-                cancel.IsEnabled = name.IsEnabled = true;
+                cancel.IsEnabled = name.IsEnabled = browse.IsEnabled = true;
                 name.Focus();
             }
         };
@@ -597,6 +637,123 @@ public partial class MainWindow : Window
         choices.Children.Add(back);
         // Capture the ID before the modal; closing or going back never changes the registry.
         if (await modal.ShowDialog<bool>(this)) viewModel.SetProjectActive(project.Id, false);
+    }
+
+    private async void Delete_Click(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCreate ||
+            sender is not Button { DataContext: Project clicked }) return;
+        var projectId = clicked.Id;
+        var project = viewModel.InactiveProjects.FirstOrDefault(current => current.Id == projectId);
+        if (project is null || project.Active)
+        {
+            viewModel.ReportError("Select an inactive project to delete.");
+            return;
+        }
+        var backup = Path.Combine(viewModel.BackupRoot, project.Name);
+        viewModel.IsBusy = true;
+        var (modal, stage, details, bar, summary, choices, options, report) = CreateOperationDialog("Delete project", project.Name);
+        var running = false;
+        var finished = false;
+        modal.Closing += (_, eventArgs) => eventArgs.Cancel = running;
+        var decision = new TaskCompletionSource<bool>();
+        modal.Closed += (_, _) => decision.TrySetResult(false);
+        SetOperationText(stage, "Permanent deletion");
+        SetOperationText(details, $"Permanently delete inactive project \"{project.Name}\" from Settings and its entire backup folder, including all extra files? This cannot be undone. Original files will be preserved.", true);
+        bar.IsIndeterminate = false;
+        var backupPath = new TextBlock();
+        SetOperationText(backupPath, $"Backup folder: {backup}");
+        options.Children.Add(backupPath);
+        options.IsVisible = true;
+        var confirm = new Button { Content = "Delete permanently" };
+        confirm.Classes.Add("danger");
+        var back = new Button { Content = "Back" };
+        confirm.Click += (_, _) => { running = true; decision.TrySetResult(true); };
+        back.Click += (_, _) => decision.TrySetResult(false);
+        choices.Children.Add(confirm);
+        choices.Children.Add(back);
+        choices.IsVisible = true;
+        var modalClosed = modal.ShowDialog(this);
+        try
+        {
+            if (!await decision.Task)
+            {
+                modal.Close();
+                return;
+            }
+            // The modal may have been open for a while; resolve the captured identity again.
+            project = viewModel.InactiveProjects.FirstOrDefault(current => current.Id == projectId);
+            if (project is null || project.Active || Path.Combine(viewModel.BackupRoot, project.Name) != backup)
+                throw new InvalidOperationException("The inactive project changed. Start deletion again.");
+            running = true;
+            choices.Children.Clear();
+            choices.IsVisible = false;
+            options.Children.Clear();
+            options.IsVisible = false;
+            SetOperationText(stage, "Preparing deletion");
+            SetOperationText(details, backup);
+            var progress = new Progress<OperationProgress>(update =>
+            {
+                if (finished) return;
+                SetOperationText(stage, update.Stage == OperationStage.Removing ? "Deleting backup files" :
+                    update.Stage == OperationStage.Saving ? "Saving settings" : "Preparing deletion");
+                SetOperationText(details, update.Path);
+                bar.IsIndeterminate = update.Total == 0;
+                bar.Value = update.Total == 0 ? 0 : 100d * update.Completed / update.Total;
+            });
+            var result = await Task.Run(() => viewModel.DeleteProject(projectId, progress));
+            finished = true;
+            if (result.ProjectDeleted) bar.Value = 100;
+            SetOperationText(stage, result.Failure is null ? "Project deleted" : result.ProjectDeleted ? "Project deleted with warnings" : "Deletion failed");
+            SetOperationText(details, result.Failure is null
+                ? "The project and its backup were permanently deleted. Original files were preserved."
+                : result.ProjectDeleted
+                    ? "The project and its backup were permanently deleted. Saving reported an error, but the saved registration confirms deletion. Original files were preserved."
+                    : "Deletion did not finish successfully. Removed backup files cannot be recovered by the application. Inspect the details before retrying.");
+            var lines = new List<string>
+            {
+                $"Project: {project.Name}", $"Backup folder: {backup}",
+                $"Registry status: {(result.ProjectDeleted ? "project removed" : "project retained unless saved state is unconfirmed; restart if changes are blocked")}."
+            };
+            if (result.Failure is { } failure) lines.Add($"Failure — {failure.Stage}: {failure.Path}: {failure.Message}");
+            lines.Add($"Removed backup paths: {result.RemovedPaths.Count}");
+            lines.AddRange(result.RemovedPaths);
+            lines.Add($"Backup paths not removed: {result.RemainingPaths.Count}");
+            lines.AddRange(result.RemainingPaths);
+            summary.ItemsSource = lines;
+            SetOperationText((TextBlock)report.Header!, $"Details — {result.RemovedPaths.Count} removed");
+            SetOperationStatus(details, result.Failure is null ? "success" : result.ProjectDeleted || result.RemovedPaths.Count > 0 ? "warning" : "error");
+            viewModel.RefreshAfterDeletion(result);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+        {
+            finished = true;
+            SetOperationText(stage, "Deletion failed");
+            SetOperationText(details, "The project could not be deleted. Inspect the details.");
+            summary.ItemsSource = new[] { error.Message };
+            SetOperationStatus(details, "error");
+            viewModel.ReportError(error.Message);
+        }
+        finally
+        {
+            finished = true;
+            running = false;
+            bar.IsIndeterminate = false;
+            viewModel.IsBusy = false;
+        }
+        if (modal.IsVisible)
+        {
+            report.IsVisible = true;
+            report.IsExpanded = false;
+            report.Classes.Add("operation-result");
+            choices.Children.Clear();
+            var close = new Button { Content = "Close" };
+            close.Click += (_, _) => modal.Close();
+            choices.Children.Add(close);
+            choices.IsVisible = true;
+            ResizeOperationDialog(modal, report);
+            await modalClosed;
+        }
     }
 
     private void Reactivate_Click(object? sender, RoutedEventArgs args)

@@ -100,7 +100,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public bool ShowEditor => panel == MainPanel.Editor;
     public IReadOnlyList<SelectedItem> Items => Selected?.Items ?? Array.Empty<SelectedItem>();
     public string ProjectName => Selected?.Name ?? "";
-    public string ProjectBackupFolder => Selected is null ? "" : Path.Combine(BackupRoot, Selected.Name);
+    public string ProjectBackupFolder => Selected is null ? "" : Path.Combine(ProjectBackupRoot, Selected.Name);
     public bool NoProjects => CanCreate && Projects.Count == 0;
     public string Message
     {
@@ -117,6 +117,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
     public string NewName { get => newName; set { newName = value; Notify(); } }
+    public string NewSourceRoot { get; set; } = "";
+    public string ProjectSourceFolder => Selected?.SourceRoot ?? "Legacy project (multiple source paths)";
+    public string ProjectBackupRoot => Selected?.BackupRootOverride ?? BackupRoot;
+    public bool InheritsBackupRoot => Selected?.BackupRootOverride is null;
     public string RenameName { get => renameName; set { renameName = value; Notify(); } }
     public Project? Selected
     {
@@ -134,6 +138,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             Notify(nameof(Items));
             Notify(nameof(ProjectName));
             Notify(nameof(ProjectBackupFolder));
+            Notify(nameof(ProjectSourceFolder));
+            Notify(nameof(ProjectBackupRoot));
+            Notify(nameof(InheritsBackupRoot));
             Notify(nameof(CanCopy));
             Notify(nameof(CanRestore));
         }
@@ -250,6 +257,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public CopyPreparation PrepareCopy(Guid projectId, IProgress<OperationProgress> progress) =>
         registry!.PrepareCopy(projectId, progress);
 
+    public CopyResult DeleteProject(Guid projectId, IProgress<OperationProgress> progress) =>
+        registry!.Delete(projectId, progress);
+
+    public void RefreshAfterDeletion(CopyResult result)
+    {
+        var selectedId = Selected?.Id;
+        Notify(nameof(Projects));
+        Notify(nameof(InactiveProjects));
+        Notify(nameof(NoInactiveProjects));
+        Notify(nameof(HasInactiveProjects));
+        Notify(nameof(NoProjects));
+        Notify(nameof(HasProjects));
+        Selected = Projects.FirstOrDefault(project => project.Id == selectedId);
+        if (result.Failure is null) Message = "Project and its backup permanently deleted. Original files were preserved.";
+        else if (result.ProjectDeleted) ReportError("Project and backup deleted. Saving reported an error, but the saved registration confirms deletion. Check the operation report.");
+        else ReportError("Deletion did not finish successfully. Check the operation report for removed and remaining backup paths.");
+    }
+
     public CopyResult Copy(CopyPlan plan, bool disableConfirmation, IProgress<OperationProgress> progress) =>
         registry!.Copy(plan, disableConfirmation, progress);
 
@@ -267,6 +292,25 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public CopyPreparation PrepareMigration(string backupRoot, IProgress<OperationProgress> progress) =>
         registry!.PrepareMigration(backupRoot, progress);
+
+    public CopyPreparation PrepareProjectMigration(Guid projectId, string? backupRoot, IProgress<OperationProgress> progress) =>
+        registry!.PrepareProjectMigration(projectId, backupRoot, progress);
+
+    public async Task ChangeSourceRoot(Guid projectId, string sourceRoot)
+    {
+        if (!CanCreate) return;
+        try
+        {
+            IsBusy = true;
+            UpdateProject(await Task.Run(() => registry!.ChangeSourceRoot(projectId, sourceRoot)));
+            Message = "Source folder saved. Original files were preserved; registered relative paths now use the new folder.";
+        }
+        catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ReportError(error.Message);
+        }
+        finally { IsBusy = false; }
+    }
 
     public CopyResult Migrate(CopyPlan plan, IProgress<OperationProgress> progress) =>
         registry!.Migrate(plan, progress);
@@ -304,7 +348,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         {
             IsBusy = true;
             var name = NewName;
-            var project = await Task.Run(() => registry!.Create(name));
+            var sourceRoot = NewSourceRoot;
+            var project = await Task.Run(() => registry!.Create(name, sourceRoot));
             IsBusy = false;
             Notify(nameof(Projects));
             Notify(nameof(NoProjects));

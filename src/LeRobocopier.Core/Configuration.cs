@@ -9,6 +9,8 @@ public sealed record SelectedItem(ItemType Type, string Path);
 public sealed record Project(Guid Id, string Name, bool Active, IReadOnlyList<SelectedItem> Items)
 {
     public ProjectOperation? LastOperation { get; init; }
+    public string? SourceRoot { get; init; }
+    public string? BackupRootOverride { get; init; }
 }
 
 public sealed record Confirmations(bool Copy = true, bool Move = true, bool Restore = true);
@@ -33,8 +35,9 @@ public sealed record CopyPreparation(CopyPlan? Plan, OperationIssue? Failure);
 public sealed record CopyResult(IReadOnlyList<string> WrittenPaths, IReadOnlyList<string> VerifiedFiles,
     IReadOnlyList<OperationIssue> Warnings, OperationIssue? Failure)
 {
-    public bool Success => Failure is null && (WrittenPaths.Count > 0 || BackupRootChanged);
+    public bool Success => Failure is null && (WrittenPaths.Count > 0 || BackupRootChanged || ProjectDeleted);
     public bool BackupRootChanged { get; init; }
+    public bool ProjectDeleted { get; init; }
     public IReadOnlyList<string> RemovedPaths { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> RemainingPaths { get; init; } = Array.Empty<string>();
 }
@@ -60,5 +63,5 @@ public static class UserDirectories
     }
 
     public static string BackupRoot() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "LeRobocopier", "Backups");
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "LeRobocopier");
 }

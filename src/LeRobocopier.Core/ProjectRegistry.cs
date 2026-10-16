@@ -62,7 +62,7 @@ public sealed partial class ProjectRegistry : IDisposable
         }
     }
 
-    public Project Create(string name)
+    public Project Create(string name, string sourceRoot)
     {
         lock (gate)
         {
@@ -71,7 +71,10 @@ public sealed partial class ProjectRegistry : IDisposable
             if (State.Projects.Any(project => string.Equals(project.Name, name, StringComparison.OrdinalIgnoreCase)))
                 throw new ArgumentException("An active or inactive project already has this name.", nameof(name));
 
-            var project = new Project(Guid.NewGuid(), name, true, Array.Empty<SelectedItem>());
+            sourceRoot = NormalizePath(sourceRoot);
+            ValidateCopyPath(sourceRoot, ItemType.Folder, false);
+            var project = new Project(Guid.NewGuid(), name, true, Array.Empty<SelectedItem>()) { SourceRoot = sourceRoot };
+            ValidateProjectPaths(project, State);
             var projects = Array.AsReadOnly(State.Projects.Append(project).ToArray());
             Save(State with { Projects = projects });
             return project;
@@ -95,7 +98,11 @@ public sealed partial class ProjectRegistry : IDisposable
             foreach (var selected in selection)
             {
                 var item = selected with { Path = NormalizePath(selected.Path) };
-                ValidateItem(item, items, State.BackupRoot);
+                if (project.SourceRoot is not null && !ContainsPath(project.SourceRoot, item.Path))
+                    throw new ArgumentException("Select files and folders inside the project's source folder.");
+                ValidateItem(item, items, project.BackupRootOverride ?? State.BackupRoot);
+                foreach (var registered in State.Projects)
+                    ValidateItem(item, Array.Empty<SelectedItem>(), Path.Combine(registered.BackupRootOverride ?? State.BackupRoot, registered.Name));
                 var exists = item.Type == ItemType.Folder ? Directory.Exists(item.Path) : File.Exists(item.Path);
                 if (!exists) throw new ArgumentException($"The selected {item.Type.ToString().ToLowerInvariant()} does not exist or is inaccessible: {item.Path}");
                 items.Add(item);
@@ -116,6 +123,56 @@ public sealed partial class ProjectRegistry : IDisposable
         }
     }
 
+    public Project ChangeSourceRoot(Guid projectId, string sourceRoot)
+    {
+        lock (gate)
+        {
+            EnsureIdle();
+            var project = GetProject(projectId);
+            if (project.SourceRoot is null)
+                throw new InvalidOperationException("This legacy project uses absolute backup paths. Create a new project to choose a source folder.");
+            sourceRoot = NormalizePath(sourceRoot);
+            ValidateCopyPath(sourceRoot, ItemType.Folder, false);
+            var updated = project with
+            {
+                SourceRoot = sourceRoot,
+                Items = Array.AsReadOnly(project.Items.Select(item => item with
+                {
+                    Path = NormalizePath(Path.Combine(sourceRoot, Path.GetRelativePath(project.SourceRoot, item.Path)))
+                }).ToArray())
+            };
+            ValidateProjectPaths(updated, State);
+            var items = new List<SelectedItem>();
+            foreach (var item in updated.Items)
+            {
+                ValidateItem(item, items, updated.BackupRootOverride ?? State.BackupRoot);
+                ValidateCopyPath(item.Path, item.Type, true);
+                items.Add(item);
+            }
+            Save(State with { Projects = Array.AsReadOnly(State.Projects.Select(current => current.Id == projectId ? updated : current).ToArray()) });
+            return updated;
+        }
+    }
+
+    private static void ValidateProjectPaths(Project project, Configuration configuration)
+    {
+        var backup = NormalizePath(Path.Combine(project.BackupRootOverride ?? configuration.BackupRoot, project.Name));
+        foreach (var registered in configuration.Projects.Where(current => current.Id != project.Id).Append(project))
+        {
+            if (registered.SourceRoot is { } source && (ContainsPath(source, backup) || ContainsPath(backup, source)))
+                throw new ArgumentException($"The backup overlaps a project source folder: {source}");
+            foreach (var item in registered.Items)
+                ValidateItem(item, Array.Empty<SelectedItem>(), backup);
+            if (registered.Id == project.Id) continue;
+            var otherBackup = NormalizePath(Path.Combine(registered.BackupRootOverride ?? configuration.BackupRoot, registered.Name));
+            if (ContainsPath(backup, otherBackup) || ContainsPath(otherBackup, backup))
+                throw new ArgumentException($"Project backup folders overlap: {backup}; {otherBackup}");
+            if (project.SourceRoot is { } projectSource && (ContainsPath(projectSource, otherBackup) || ContainsPath(otherBackup, projectSource)))
+                throw new ArgumentException($"The source folder overlaps a project backup: {otherBackup}");
+            foreach (var item in project.Items) ValidateItem(item, Array.Empty<SelectedItem>(), otherBackup);
+        }
+    }
+
     public Project SetProjectActive(Guid projectId, bool active)
     {
         lock (gate)
@@ -128,6 +185,189 @@ public sealed partial class ProjectRegistry : IDisposable
             var projects = Array.AsReadOnly(State.Projects.Select(current => current.Id == projectId ? updated : current).ToArray());
             Save(State with { Projects = projects });
             return updated;
+        }
+    }
+
+    public CopyResult Delete(Guid projectId, IProgress<OperationProgress>? progress = null)
+    {
+        Project project;
+        lock (gate)
+        {
+            EnsureIdle();
+            project = State.Projects.FirstOrDefault(current => current.Id == projectId)
+                ?? throw new ArgumentException("The project does not exist.", nameof(projectId));
+            if (project.Active) throw new InvalidOperationException("Only inactive projects can be deleted.");
+            executionId = Guid.NewGuid();
+            copyRunning = true;
+        }
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var entries = new List<CopyEntry>();
+        var expected = new Dictionary<string, (long Length, byte[] Hash)>(comparer);
+        var remaining = new HashSet<string>(comparer);
+        var removed = new List<string>();
+        var stage = OperationStage.Preparing;
+        var backupRoot = project.BackupRootOverride ?? State.BackupRoot;
+        var current = backupRoot;
+        var deleted = false;
+        try
+        {
+            ValidateName(project.Name);
+            ValidateProjectPaths(project, State);
+            var backup = NormalizePath(Path.Combine(backupRoot, project.Name));
+            current = backup;
+            if (!ContainsPath(backupRoot, backup) || comparer.Equals(backupRoot, backup) ||
+                ContainsPath(backup, file) || ContainsPath(backup, file + ".lock"))
+                throw new IOException("The project backup folder is unsafe for deletion.");
+            foreach (var item in State.Projects.SelectMany(registered => registered.Items))
+                if (ContainsPath(backup, item.Path) || ContainsPath(item.Path, backup))
+                    throw new IOException($"The backup overlaps a registered original: {item.Path}");
+            current = file;
+            ValidateCopyPath(file, ItemType.File, false);
+            current = file + ".lock";
+            ValidateCopyPath(current, ItemType.File, false);
+            current = backup;
+            remaining.Add(backup);
+            ValidateCopyPath(backup, ItemType.Folder, true);
+            var pending = new Stack<SelectedItem>();
+            if (RenameFolderExists(backup, false)) pending.Push(new SelectedItem(ItemType.Folder, backup));
+            else remaining.Remove(backup);
+            while (pending.TryPop(out var item))
+            {
+                current = NormalizePath(item.Path);
+                remaining.Add(current);
+                if (!ContainsPath(backup, current)) throw new IOException($"Path outside the project backup: {current}");
+                ValidateCopyPath(current, item.Type, false);
+                progress?.Report(new OperationProgress(stage, current, entries.Count, 0));
+                entries.Add(new CopyEntry(item.Type, current, current));
+                if (item.Type == ItemType.File)
+                {
+                    using var stream = new FileStream(current, FileMode.Open, FileAccess.Read, FileShare.Read,
+                        128 * 1024, FileOptions.SequentialScan);
+                    var length = stream.Length;
+                    var hash = System.Security.Cryptography.SHA256.HashData(stream);
+                    if (stream.Length != length) throw new IOException("The backup changed during inventory.");
+                    expected.Add(current, (length, hash));
+                }
+                else
+                    foreach (var child in Directory.EnumerateFileSystemEntries(current))
+                    {
+                        current = child;
+                        remaining.Add(NormalizePath(child));
+                        var attributes = File.GetAttributes(child);
+                        pending.Push(new SelectedItem((attributes & FileAttributes.Directory) != 0 ? ItemType.Folder : ItemType.File, child));
+                    }
+            }
+            var authorized = entries.ToDictionary(entry => entry.Source, comparer);
+            var children = entries.Where(entry => !comparer.Equals(entry.Source, backup))
+                .GroupBy(entry => Path.GetDirectoryName(entry.Source)!, comparer)
+                .ToDictionary(group => group.Key, group => new HashSet<string>(group.Select(entry => entry.Source), comparer), comparer);
+            foreach (var entry in entries)
+            {
+                current = entry.Source;
+                ValidateMoveEntry(entry, expected, authorized, children, remaining);
+            }
+            stage = OperationStage.Saving;
+            current = file;
+            progress?.Report(new OperationProgress(stage, current, 0, 0));
+            ValidateSavedConfiguration();
+            // Prove persistence is available while retaining the inactive entry for any partial deletion.
+            Save(State);
+            stage = OperationStage.Removing;
+            // Resolve the identity again immediately before destructive work, rather than trusting the UI snapshot.
+            var registeredProject = State.Projects.FirstOrDefault(registered => registered.Id == projectId);
+            if (registeredProject is null || registeredProject.Active || registeredProject.Name != project.Name)
+                throw new InvalidOperationException("The inactive project changed. Prepare deletion again.");
+            foreach (var entry in entries.OrderByDescending(entry => entry.Source.Length))
+            {
+                current = entry.Source;
+                progress?.Report(new OperationProgress(stage, current, removed.Count, entries.Count));
+                ValidateMoveEntry(entry, expected, authorized, children, remaining);
+                if (entry.Type == ItemType.File) File.Delete(current);
+                else Directory.Delete(current, false);
+                removed.Add(current);
+                remaining.Remove(current);
+                if (children.TryGetValue(Path.GetDirectoryName(current)!, out var siblings)) siblings.Remove(current);
+            }
+            current = backup;
+            ValidateCopyPath(backup, ItemType.Folder, true);
+            if (RenameFolderExists(backup, false))
+            {
+                remaining.Add(backup);
+                throw new IOException("The backup folder appeared again. The project registry entry was preserved.");
+            }
+            stage = OperationStage.Saving;
+            current = file;
+            progress?.Report(new OperationProgress(stage, current, 0, 0));
+            ValidateSavedConfiguration();
+            try
+            {
+                Save(State with { Projects = Array.AsReadOnly(State.Projects.Where(registered => registered.Id != projectId).ToArray()) });
+                deleted = true;
+            }
+            catch
+            {
+                try
+                {
+                    ReloadSavedConfiguration();
+                    deleted = State.Projects.All(registered => registered.Id != projectId);
+                }
+                catch { RequiresConfigurationReload = true; }
+                throw;
+            }
+            return new CopyResult(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<OperationIssue>(), null)
+            {
+                ProjectDeleted = deleted, RemovedPaths = removed.AsReadOnly(), RemainingPaths = Array.AsReadOnly(remaining.ToArray())
+            };
+        }
+        catch (Exception error)
+        {
+            if (stage == OperationStage.Removing)
+                foreach (var folder in entries.Where(entry => entry.Type == ItemType.Folder && remaining.Contains(entry.Source)))
+                {
+                    try
+                    {
+                        ValidateCopyPath(folder.Source, ItemType.Folder, false);
+                        remaining.UnionWith(Directory.EnumerateFileSystemEntries(folder.Source).Select(NormalizePath));
+                    }
+                    catch (Exception inspectionError) when (inspectionError is IOException or UnauthorizedAccessException or ArgumentException) { }
+                }
+            return new CopyResult(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<OperationIssue>(),
+                new OperationIssue(stage, current, error.Message))
+            {
+                ProjectDeleted = deleted, RemovedPaths = removed.AsReadOnly(), RemainingPaths = Array.AsReadOnly(remaining.ToArray())
+            };
+        }
+        finally
+        {
+            lock (gate)
+            {
+                copyRunning = false;
+                executionId = null;
+            }
+        }
+    }
+
+    private void ValidateSavedConfiguration()
+    {
+        try
+        {
+            ValidateCopyPath(file, ItemType.File, false);
+            ValidateCopyPath(file + ".lock", ItemType.File, false);
+            using var stream = File.OpenRead(file);
+            using var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit });
+            var saved = Read(XDocument.Load(reader));
+            if (saved.Version != State.Version || saved.BackupRoot != State.BackupRoot || saved.Confirmations != State.Confirmations ||
+                saved.Projects.Count != State.Projects.Count || saved.Projects.Where((project, index) =>
+                    project.Id != State.Projects[index].Id || project.Name != State.Projects[index].Name ||
+                    project.Active != State.Projects[index].Active || project.LastOperation != State.Projects[index].LastOperation ||
+                    project.SourceRoot != State.Projects[index].SourceRoot || project.BackupRootOverride != State.Projects[index].BackupRootOverride ||
+                    !project.Items.SequenceEqual(State.Projects[index].Items)).Any())
+                throw new InvalidDataException("The saved configuration changed outside the application.");
+        }
+        catch (Exception error)
+        {
+            RequiresConfigurationReload = true;
+            throw new IOException("The saved configuration could not be confirmed. Restart the application before making changes. " + error.Message, error);
         }
     }
 
@@ -144,8 +384,10 @@ public sealed partial class ProjectRegistry : IDisposable
                 throw new ArgumentException("An active or inactive project already has this name.", nameof(name));
             if (project.Name == name) return project;
 
-            var source = Path.Combine(State.BackupRoot, project.Name);
-            var destination = Path.Combine(State.BackupRoot, name);
+            var backupRoot = project.BackupRootOverride ?? State.BackupRoot;
+            ValidateProjectPaths(project with { Name = name }, State);
+            var source = Path.Combine(backupRoot, project.Name);
+            var destination = Path.Combine(backupRoot, name);
             ValidateCopyPath(source, ItemType.Folder, true);
             ValidateCopyPath(destination, ItemType.Folder, true);
             var caseOnly = OperatingSystem.IsWindows() && string.Equals(project.Name, name, StringComparison.OrdinalIgnoreCase);
@@ -177,13 +419,13 @@ public sealed partial class ProjectRegistry : IDisposable
             }
 
             var temporaryName = $".rename-{projectId:N}-{Guid.NewGuid():N}";
-            var temporaryFolder = Path.Combine(State.BackupRoot, temporaryName);
+            var temporaryFolder = Path.Combine(backupRoot, temporaryName);
             ValidateCopyPath(temporaryFolder, ItemType.Folder, true);
             if (RenameFolderExists(temporaryFolder, false) || State.Projects.Any(current =>
                 string.Equals(current.Name, temporaryName, StringComparison.OrdinalIgnoreCase)))
                 throw new IOException("The temporary rename destination already exists.");
             var pending = new XDocument(new XElement("Rename", new XAttribute("id", projectId),
-                new XAttribute("root", State.BackupRoot), new XAttribute("old", project.Name),
+                new XAttribute("root", backupRoot), new XAttribute("old", project.Name),
                 new XAttribute("new", name), new XAttribute("temporary", temporaryName)));
             var journal = file + ".rename.xml";
             var journalTemporary = journal + $".{Guid.NewGuid():N}.tmp";
@@ -272,25 +514,26 @@ public sealed partial class ProjectRegistry : IDisposable
         var temporaryName = (string)node.Attribute("temporary")!;
         ValidateName(oldName);
         ValidateName(newName);
+        var project = State.Projects.FirstOrDefault(current => current.Id == projectId);
+        var backupRoot = project?.BackupRootOverride ?? State.BackupRoot;
         var prefix = $".rename-{projectId:N}-";
         if (!temporaryName.StartsWith(prefix, StringComparison.Ordinal) ||
             !Guid.TryParseExact(temporaryName[prefix.Length..], "N", out _) || oldName == newName ||
-            !string.Equals((string)node.Attribute("root")!, State.BackupRoot, StringComparison.Ordinal) ||
+            !string.Equals((string)node.Attribute("root")!, backupRoot, StringComparison.Ordinal) ||
             State.Projects.Any(current => current.Id != projectId &&
                 (string.Equals(current.Name, oldName, StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(current.Name, newName, StringComparison.OrdinalIgnoreCase))) ||
             State.Projects.Any(current => string.Equals(current.Name, temporaryName, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidDataException("The pending rename does not match this registry.");
-        var project = State.Projects.FirstOrDefault(current => current.Id == projectId);
         if (project is null || (project.Name != oldName && project.Name != newName))
             throw new InvalidDataException("The pending rename project does not match this registry.");
         var caseOnly = OperatingSystem.IsWindows() && string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase);
-        var candidates = new[] { oldName, newName, temporaryName }.Select(name => Path.Combine(State.BackupRoot, name)).ToArray();
+        var candidates = new[] { oldName, newName, temporaryName }.Select(name => Path.Combine(backupRoot, name)).ToArray();
         foreach (var candidate in candidates) ValidateCopyPath(candidate, ItemType.Folder, true);
         var present = candidates.Where(candidate => RenameFolderExists(candidate, caseOnly)).ToArray();
         if (present.Length != 1)
             throw new IOException("Cannot locate one unambiguous backup folder. Preserved candidates: " + string.Join("; ", candidates));
-        var destination = Path.Combine(State.BackupRoot, project.Name);
+        var destination = Path.Combine(backupRoot, project.Name);
         if (!string.Equals(present[0], destination, StringComparison.Ordinal))
         {
             ValidateCopyPath(present[0], ItemType.Folder, false);
@@ -425,7 +668,9 @@ public sealed partial class ProjectRegistry : IDisposable
                         ProjectOperation.Move => "Mover",
                         ProjectOperation.Restore => "Restaurar",
                         _ => throw new InvalidOperationException("Unknown last operation.")
-                    }), new XElement("Itens", project.Items.Select(item =>
+                    }), project.SourceRoot is null ? null : new XAttribute("pastaOrigem", project.SourceRoot),
+                project.BackupRootOverride is null ? null : new XAttribute("baseBackup", project.BackupRootOverride),
+                new XElement("Itens", project.Items.Select(item =>
                     new XElement("Item", new XAttribute("tipo", item.Type == ItemType.File ? "Arquivo" : "Pasta"),
                         new XAttribute("caminho", item.Path)))))));
             var xml = new XDocument(new XElement("Configuracao",
@@ -479,8 +724,12 @@ public sealed partial class ProjectRegistry : IDisposable
         foreach (var node in projectsXml.Elements())
         {
             if (node.Name != "Projeto") throw new InvalidDataException("Unknown project record.");
-            ValidateStructure(node, node.Attribute("ultimoProcesso") is null
-                ? ["id", "nome", "ativo"] : ["id", "nome", "ativo", "ultimoProcesso"], ["Itens"]);
+            var attributes = new List<string> { "id", "nome", "ativo" };
+            foreach (var optional in new[] { "ultimoProcesso", "pastaOrigem", "baseBackup" })
+                if (node.Attribute(optional) is not null) attributes.Add(optional);
+            ValidateStructure(node, attributes.ToArray(), ["Itens"]);
+            var sourceRoot = node.Attribute("pastaOrigem") is { } sourceAttribute ? NormalizePath(sourceAttribute.Value) : null;
+            var backupOverride = node.Attribute("baseBackup") is { } backupAttribute ? NormalizePath(backupAttribute.Value) : null;
             var lastOperation = (string?)node.Attribute("ultimoProcesso") switch
             {
                 null => (ProjectOperation?)null,
@@ -507,14 +756,18 @@ public sealed partial class ProjectRegistry : IDisposable
                 if (typeText is not ("Arquivo" or "Pasta")) throw new InvalidDataException("Unknown item type.");
                 var item = new SelectedItem(typeText == "Arquivo" ? ItemType.File : ItemType.Folder,
                     NormalizePath((string?)itemXml.Attribute("caminho") ?? ""));
-                ValidateItem(item, items, backupRoot);
+                if (sourceRoot is not null && !ContainsPath(sourceRoot, item.Path))
+                    throw new InvalidDataException("A registered item is outside its project's source folder.");
+                ValidateItem(item, items, backupOverride ?? backupRoot);
                 items.Add(item);
             }
             projects.Add(new Project(id, name,
                 (bool?)node.Attribute("ativo") ?? throw new InvalidDataException("Missing active flag."),
-                items.AsReadOnly()) { LastOperation = lastOperation });
+                items.AsReadOnly()) { LastOperation = lastOperation, SourceRoot = sourceRoot, BackupRootOverride = backupOverride });
         }
-        return new Configuration(1, backupRoot, preferences, projects.AsReadOnly());
+        var configuration = new Configuration(1, backupRoot, preferences, projects.AsReadOnly());
+        foreach (var project in projects) ValidateProjectPaths(project, configuration);
+        return configuration;
     }
 
     private static void ValidateStructure(XElement node, string[] attributes, string[] children)
@@ -543,7 +796,7 @@ public sealed partial class ProjectRegistry : IDisposable
             string[] reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
             if (name.EndsWith('.') || name.Length > 255 || reserved.Contains(stem, StringComparer.OrdinalIgnoreCase) ||
                 (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) ||
-                    stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && "123456789¹²³".Contains(stem[3])))
+                    stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && "123456789Â¹Â²Â³".Contains(stem[3])))
                 throw new ArgumentException("This name is reserved or invalid for a subfolder on Windows.", nameof(name));
         }
         else if (System.Text.Encoding.UTF8.GetByteCount(name) > 255)
