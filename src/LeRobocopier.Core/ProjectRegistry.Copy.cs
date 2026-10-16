@@ -106,13 +106,27 @@ public sealed partial class ProjectRegistry
         inventoryPath = null;
         try
         {
-            if (disableConfirmation)
+            if (!migration)
             {
+                stage = OperationStage.Saving;
                 current = file;
-                Save(State with { Confirmations = restore
-                    ? State.Confirmations with { Restore = false }
-                    : move ? State.Confirmations with { Move = false }
-                    : State.Confirmations with { Copy = false } });
+                var project = GetProject(plan.ProjectId);
+                var updated = project with
+                {
+                    LastOperation = restore ? ProjectOperation.Restore : move ? ProjectOperation.Move : ProjectOperation.Copy
+                };
+                var projects = Array.AsReadOnly(State.Projects.Select(currentProject =>
+                    currentProject.Id == project.Id ? updated : currentProject).ToArray());
+                Save(State with
+                {
+                    Projects = projects,
+                    Confirmations = !disableConfirmation ? State.Confirmations : restore
+                        ? State.Confirmations with { Restore = false }
+                        : move ? State.Confirmations with { Move = false }
+                        : State.Confirmations with { Copy = false }
+                });
+                stage = OperationStage.Preparing;
+                current = "";
             }
             // Confirmation may have taken arbitrarily long; the old inventory authorizes no writes.
             var inventoriedFiles = move || migration ? new Dictionary<string, (long Length, byte[] Hash)>(pathComparer) : null;

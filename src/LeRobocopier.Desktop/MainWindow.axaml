@@ -1,4 +1,4 @@
-<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:LeRobocopier.Desktop" xmlns:core="using:LeRobocopier.Core" x:Class="LeRobocopier.Desktop.MainWindow" x:DataType="local:MainWindowViewModel" Title="Le Robocopier" Width="1000" Height="680" MinWidth="680" MinHeight="480">
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:LeRobocopier.Desktop" xmlns:core="using:LeRobocopier.Core" x:Class="LeRobocopier.Desktop.MainWindow" x:DataType="local:MainWindowViewModel" Title="Le Robocopier" Width="1200" Height="760" MinWidth="1000" MinHeight="480">
   <Grid>
     <Grid x:Name="Shell" ColumnDefinitions="208,*" IsVisible="False">
       <Border Background="{StaticResource SidebarBrush}" Padding="16,24">
@@ -46,9 +46,9 @@
           <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
             <StackPanel Spacing="8">
               <TextBlock Classes="projects-title" Text="Projects"/>
-              <TextBlock Classes="muted" Text="{Binding Selection}" FontSize="16"/>
+              <TextBlock Classes="muted" Text="Select a project or create a new one to get started." FontSize="16"/>
             </StackPanel>
-            <Button Grid.Column="1" Classes="primary new-project" Click="NewProject_Click" IsEnabled="{Binding CanCreate}" VerticalAlignment="Top" AutomationProperties.Name="New project">
+            <Button Grid.Column="1" Classes="primary new-project" Click="NewProject_Click" IsEnabled="{Binding CanCreate}" VerticalAlignment="Center" AutomationProperties.Name="New project">
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <PathIcon Data="{StaticResource AddIcon}" Width="18" Height="18" VerticalAlignment="Center"/>
                 <TextBlock Text="New project" VerticalAlignment="Center"/>
@@ -73,168 +73,237 @@
               </Grid>
             </ScrollViewer>
           </Border>
-          <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" IsVisible="{Binding HasProjects}">
-            <Grid x:Name="ProjectLayout" RowDefinitions="Auto,Auto" RowSpacing="24" IsVisible="{Binding HasProjects}">
-              <ListBox x:Name="ProjectList" Classes="projects" ItemsSource="{Binding Projects}" SelectedItem="{Binding Selected, Mode=TwoWay}" SelectionMode="Single" MaxHeight="600" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <Grid x:Name="ProjectLayout" Grid.Row="1" ColumnDefinitions="*,360" ColumnSpacing="20" IsVisible="{Binding HasProjects}">
+            <Border Classes="card project-list-surface">
+              <ListBox x:Name="ProjectList" Classes="projects" ItemsSource="{Binding Projects}" SelectedItem="{Binding Selected, Mode=TwoWay}" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="core:Project">
                     <Border Classes="project-card">
                       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                        <PathIcon Data="{StaticResource ProjectIcon}" VerticalAlignment="Center"/>
+                        <Image Source="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png" Width="36" Height="36" VerticalAlignment="Top" Margin="0,2,0,0"/>
                         <StackPanel Grid.Column="1" Spacing="6">
-                          <TextBlock Classes="card-title" Text="{Binding Name}"/>
+                          <TextBlock Classes="card-title" Text="{Binding Name}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}"/>
                           <TextBlock Classes="muted" Text="{Binding Items.Count, StringFormat='{}{0} configured item(s)'}"/>
+                          <TextBlock Classes="muted" ToolTip.Tip="Most recent operation started; this does not indicate success.">
+                            <Run Text="Last run: "/>
+                            <Run Text="{Binding LastOperation, TargetNullValue='Not recorded'}"/>
+                          </TextBlock>
                         </StackPanel>
-                        <Button Grid.Column="2" Content="Open project" Click="Open_Click" VerticalAlignment="Center"/>
+                        <Button Grid.Column="2" Classes="project-open" Content="Open" Click="Open_Click" VerticalAlignment="Center" AutomationProperties.Name="{Binding Name, StringFormat='Open {0}'}"/>
                       </Grid>
                     </Border>
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
-              <Border x:Name="ProjectSummary" Grid.Row="1" Classes="card">
-                <StackPanel Spacing="16">
-                  <TextBlock Classes="muted" Text="Select a project to view its registered items." IsVisible="{Binding NoSelection}"/>
-                  <StackPanel Spacing="16" IsVisible="{Binding HasSelection}">
-                    <PathIcon Data="{StaticResource ProjectIcon}" HorizontalAlignment="Left" Width="32" Height="32"/>
-                    <TextBlock Classes="card-title" Text="{Binding ProjectName}"/>
-                    <TextBlock Classes="muted" Text="{Binding Items.Count, StringFormat='{}{0} configured item(s)'}"/>
-                    <TextBlock Text="No items configured yet" IsVisible="{Binding NoItems}"/>
-                    <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Disabled">
-                      <ItemsControl ItemsSource="{Binding Items}">
-                        <ItemsControl.ItemTemplate>
-                          <DataTemplate x:DataType="core:SelectedItem">
-                            <StackPanel Spacing="4" Margin="0,0,0,16">
-                              <StackPanel Orientation="Horizontal" Spacing="8">
-                                <PathIcon Loaded="ItemIcon_Loaded"/>
-                                <TextBlock FontWeight="SemiBold" Text="{Binding Type}"/>
-                              </StackPanel>
-                              <SelectableTextBlock Text="{Binding Path}" TextWrapping="Wrap" ToolTip.Tip="{Binding Path}"/>
-                            </StackPanel>
-                          </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                      </ItemsControl>
-                    </ScrollViewer>
-                    <Button Classes="primary" Content="Open project" Click="OpenSelected_Click"/>
-                  </StackPanel>
-                </StackPanel>
-              </Border>
-            </Grid>
-          </ScrollViewer>
+            </Border>
+            <Border x:Name="ProjectSummary" Grid.Column="1" Classes="card project-details" ClipToBounds="True">
+              <Grid>
+                <TextBlock Classes="muted" Text="Select a project to view its details." ToolTip.Tip="Select a project to view its details." IsVisible="{Binding NoSelection}"/>
+                <Grid RowDefinitions="*,Auto" RowSpacing="16" IsVisible="{Binding HasSelection}">
+                  <Grid ClipToBounds="True">
+                    <StackPanel Spacing="20" VerticalAlignment="Top">
+                      <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
+                        <Image Source="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png" Width="48" Height="48" VerticalAlignment="Top"/>
+                        <StackPanel Grid.Column="1" Spacing="6">
+                          <TextBlock Classes="card-title" Text="{Binding ProjectName}" ToolTip.Tip="{Binding ProjectName}" FontSize="22"/>
+                          <TextBlock Classes="muted" Text="{Binding Items.Count, StringFormat='{}{0} configured item(s)'}" ToolTip.Tip="{Binding Items.Count, StringFormat='{}{0} configured item(s)'}"/>
+                        </StackPanel>
+                      </Grid>
+                      <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"/>
+                      <Grid ColumnDefinitions="Auto,104,*" ColumnSpacing="12">
+                        <Image Source="{StaticResource CopyNavigationImage}" Width="22" Height="22" VerticalAlignment="Top"/>
+                        <TextBlock Grid.Column="1" Text="Operations" ToolTip.Tip="Operations"/>
+                        <TextBlock Grid.Column="2" Classes="muted" Text="Copy, Move, Restore" ToolTip.Tip="Copy, Move, Restore"/>
+                      </Grid>
+                      <Grid ColumnDefinitions="Auto,104,*" ColumnSpacing="12">
+                        <Image Source="{StaticResource MoveNavigationImage}" Width="22" Height="22" VerticalAlignment="Top"/>
+                        <TextBlock Grid.Column="1" Text="Source folder" ToolTip.Tip="Source folder"/>
+                        <TextBlock Grid.Column="2" Classes="muted" Text="C:\Source\Project" ToolTip.Tip="C:\Source\Project"/>
+                      </Grid>
+                      <Grid ColumnDefinitions="Auto,104,*" ColumnSpacing="12">
+                        <Image Source="{StaticResource MoveNavigationImage}" Width="22" Height="22" VerticalAlignment="Top"/>
+                        <TextBlock Grid.Column="1" Text="Backup folder" ToolTip.Tip="Backup folder"/>
+                        <TextBlock Grid.Column="2" Classes="muted" Text="{Binding ProjectBackupFolder}" ToolTip.Tip="{Binding ProjectBackupFolder}"/>
+                      </Grid>
+                    </StackPanel>
+                  </Grid>
+                  <Button Grid.Row="1" Click="OpenSelected_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" AutomationProperties.Name="Edit project">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                      <Image Source="{StaticResource SettingsNavigationImage}" Width="20" Height="20"/>
+                      <TextBlock Text="Edit project" ToolTip.Tip="Edit project"/>
+                    </StackPanel>
+                  </Button>
+                </Grid>
+              </Grid>
+            </Border>
+          </Grid>
         </Grid>
         <ScrollViewer IsVisible="{Binding ShowSettings}" HorizontalScrollBarVisibility="Disabled">
-          <StackPanel Spacing="24">
+          <StackPanel Spacing="20">
             <StackPanel Spacing="8">
-              <TextBlock Classes="title" Text="Settings"/>
-              <TextBlock Classes="muted" Text="Configure backups and confirmation preferences for all projects."/>
+              <TextBlock Classes="settings-title" Text="Settings"/>
+              <TextBlock Classes="muted" Text="Configure how Le Robocopier works across all your projects." FontSize="16"/>
             </StackPanel>
-            <Border Classes="card">
+            <Border Classes="card settings-card">
               <StackPanel Spacing="16">
-                <StackPanel Orientation="Horizontal" Spacing="12">
-                  <Border Background="{StaticResource SelectionBrush}" CornerRadius="24" Padding="12">
-                    <PathIcon Data="{StaticResource SettingsIcon}"/>
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="20">
+                  <Border Classes="settings-icon-badge">
+                    <Image Source="{StaticResource SettingsFolderImage}" Width="28" Height="28"/>
                   </Border>
-                  <TextBlock Classes="card-title" Text="Backup and confirmations" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                    <TextBlock Classes="settings-card-title" Text="Backup root"/>
+                    <TextBlock Classes="muted" Text="Location where all project backups are stored."/>
+                  </StackPanel>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                  <TextBox Classes="backup-root" Text="{Binding BackupRoot, Mode=OneWay}" IsReadOnly="True" TextWrapping="NoWrap" VerticalContentAlignment="Center" ToolTip.Tip="{Binding BackupRoot}" AutomationProperties.Name="Backup root"/>
+                  <Button Grid.Column="1" Content="Change backup root" Click="ChangeBackupRoot_Click" IsEnabled="{Binding CanCreate}" VerticalAlignment="Center" VerticalContentAlignment="Center"/>
+                </Grid>
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="muted" Text="Changing the backup root migrates complete backups of active and inactive projects and always requires confirmation."/>
+                  <TextBlock Classes="muted" Text="Each process preference below applies to all projects."/>
                 </StackPanel>
-                <TextBlock Classes="muted" Text="Location and global operation preferences."/>
-                <TextBlock FontWeight="SemiBold" Text="Backup root"/>
-                <SelectableTextBlock Text="{Binding BackupRoot}" TextWrapping="Wrap" ToolTip.Tip="{Binding BackupRoot}"/>
-                <Button Content="Change backup root" Click="ChangeBackupRoot_Click" IsEnabled="{Binding CanCreate}"/>
-                <TextBlock Classes="muted" Text="Changing the backup root migrates complete backups of active and inactive projects and always requires confirmation."/>
-                <CheckBox Content="Confirm Copy" IsChecked="{Binding ConfirmCopy, Mode=TwoWay}" IsEnabled="{Binding CanCreate}"/>
-                <TextBlock Classes="muted" Text="Ask before copying registered items for any project. Originals are preserved."/>
-                <CheckBox Content="Confirm Move" IsChecked="{Binding ConfirmMove, Mode=TwoWay}" IsEnabled="{Binding CanCreate}"/>
-                <TextBlock Classes="muted" Text="Ask before moving registered items for any project. Originals are removed after verification."/>
-                <CheckBox Content="Confirm Restore" IsChecked="{Binding ConfirmRestore, Mode=TwoWay}" IsEnabled="{Binding CanCreate}"/>
-                <TextBlock Classes="muted" Text="Ask before restoring registered items for any project. Corresponding originals may be overwritten."/>
+                <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"/>
+                <StackPanel Spacing="20">
+                  <CheckBox Classes="confirmation-option" IsChecked="{Binding ConfirmCopy, Mode=TwoWay}" IsEnabled="{Binding CanCreate}" AutomationProperties.Name="Confirm Copy">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="Confirm Copy" FontSize="16"/>
+                      <TextBlock Classes="muted" Text="Show a confirmation dialog before copying items. Originals are preserved."/>
+                    </StackPanel>
+                  </CheckBox>
+                  <CheckBox Classes="confirmation-option" IsChecked="{Binding ConfirmMove, Mode=TwoWay}" IsEnabled="{Binding CanCreate}" AutomationProperties.Name="Confirm Move">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="Confirm Move" FontSize="16"/>
+                      <TextBlock Classes="muted" Text="Show a confirmation dialog before moving items. Originals are removed after verification."/>
+                    </StackPanel>
+                  </CheckBox>
+                  <CheckBox Classes="confirmation-option" IsChecked="{Binding ConfirmRestore, Mode=TwoWay}" IsEnabled="{Binding CanCreate}" AutomationProperties.Name="Confirm Restore">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="Confirm Restore" FontSize="16"/>
+                      <TextBlock Classes="muted" Text="Show a confirmation dialog before restoring items. Corresponding originals may be overwritten."/>
+                    </StackPanel>
+                  </CheckBox>
+                </StackPanel>
               </StackPanel>
             </Border>
-            <Border Classes="card">
+            <Border Classes="card settings-card">
               <StackPanel Spacing="16">
-                <StackPanel Orientation="Horizontal" Spacing="12">
-                  <Border Background="{StaticResource SelectionBrush}" CornerRadius="24" Padding="12">
-                    <PathIcon Data="{StaticResource ProjectIcon}"/>
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="20">
+                  <Border Classes="settings-icon-badge">
+                    <Image Source="{StaticResource InactiveProjectsImage}" Width="28" Height="28"/>
                   </Border>
-                  <TextBlock Classes="card-title" Text="Inactive projects" VerticalAlignment="Center"/>
-                </StackPanel>
-                <TextBlock Classes="muted" Text="Inactive names remain reserved. Reactivation preserves registered items and backups."/>
+                  <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                    <TextBlock Classes="settings-card-title" Text="Inactive projects"/>
+                    <TextBlock Classes="muted" Text="Inactive names remain reserved. Reactivation preserves registered items and backups."/>
+                  </StackPanel>
+                </Grid>
                 <TextBlock Text="No inactive projects." IsVisible="{Binding NoInactiveProjects}"/>
                 <ItemsControl ItemsSource="{Binding InactiveProjects}" IsEnabled="{Binding CanCreate}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="core:Project">
-                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4">
-                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
-                        <Button Grid.Column="1" Content="Reactivate" Click="Reactivate_Click"/>
-                      </Grid>
+                      <Border Classes="inactive-project-row" Margin="0,0,0,8">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
+                          <Image Source="{StaticResource SettingsFolderImage}" Width="28" Height="28"/>
+                          <TextBlock Grid.Column="1" Text="{Binding Name}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}" VerticalAlignment="Center" FontSize="16"/>
+                          <Button Grid.Column="2" Content="Reactivate" Click="Reactivate_Click" AutomationProperties.Name="{Binding Name, StringFormat='Reactivate {0}'}"/>
+                          <Button Grid.Column="3" Classes="danger" Content="Delete" IsEnabled="False" ToolTip.Tip="Not available yet" ToolTip.ShowOnDisabled="True" AutomationProperties.Name="{Binding Name, StringFormat='Delete {0} (not available yet)'}"/>
+                        </Grid>
+                      </Border>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-              </StackPanel>
-            </Border>
-            <Button Content="Back to projects" Click="Projects_Click"/>
-          </StackPanel>
-        </ScrollViewer>
-        <ScrollViewer IsVisible="{Binding ShowEditor}" IsEnabled="{Binding CanCreate}" HorizontalScrollBarVisibility="Disabled">
-          <StackPanel Spacing="24">
-            <Button Click="Projects_Click" AutomationProperties.Name="Projects">
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <PathIcon Data="{StaticResource BackIcon}"/>
-                <TextBlock Text="Projects"/>
-              </StackPanel>
-            </Button>
-            <TextBlock Classes="title" Text="{Binding ProjectName}"/>
-            <Border Classes="card">
-              <StackPanel Spacing="12">
-                <TextBlock Text="Project name"/>
-                <TextBox Text="{Binding RenameName, Mode=TwoWay}" AutomationProperties.Name="New project name"/>
-                <Button Content="Rename project" Click="Rename_Click" IsEnabled="{Binding CanCopy}"/>
-              </StackPanel>
-            </Border>
-            <WrapPanel Orientation="Horizontal">
-              <Button Classes="primary" Content="Add files" Click="AddFiles_Click" Margin="0,0,12,8"/>
-              <Button Content="Add folders" Click="AddFolders_Click" Margin="0,0,0,8"/>
-            </WrapPanel>
-            <TextBlock Classes="muted" Text="Folders include all content present at the time of the operation. Removing an item only changes the registry."/>
-            <Border Classes="card" IsVisible="{Binding NoItems}">
-              <StackPanel Spacing="16">
-                <PathIcon Data="{StaticResource FolderIcon}" Width="48" Height="48" Foreground="{StaticResource TextSecondaryBrush}"/>
-                <TextBlock Classes="card-title" Text="No items configured yet" HorizontalAlignment="Center"/>
-                <TextBlock Classes="muted" Text="Add files or folders to include them in this project." HorizontalAlignment="Center"/>
-                <Button Classes="primary" Content="Add files" Click="AddFiles_Click" HorizontalAlignment="Center"/>
-              </StackPanel>
-            </Border>
-            <ItemsControl ItemsSource="{Binding Items}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="core:SelectedItem">
-                  <Border Classes="card" Margin="0,0,0,8">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                      <StackPanel Spacing="8">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                          <PathIcon Loaded="ItemIcon_Loaded"/>
-                          <TextBlock FontWeight="SemiBold" Text="{Binding Type}"/>
-                        </StackPanel>
-                        <SelectableTextBlock Text="{Binding Path}" TextWrapping="Wrap"/>
-                      </StackPanel>
-                      <Button Grid.Column="1" Classes="danger" Content="Remove" Click="Remove_Click" VerticalAlignment="Center"/>
-                    </Grid>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-            <Border Classes="card">
-              <StackPanel Spacing="12">
-                <TextBlock Classes="muted" Text="Deactivate to hide this project from the active list. Its registered items, backups and reserved name are preserved."/>
-                <Button Classes="danger" Click="Deactivate_Click" AutomationProperties.Name="Deactivate project">
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <PathIcon Data="{StaticResource DeactivateIcon}"/>
-                    <TextBlock Text="Deactivate project"/>
+                <Button Click="Projects_Click" Margin="0,4,0,0" AutomationProperties.Name="Back to projects">
+                  <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Image Source="{StaticResource BackNavigationImage}" Width="20" Height="20"/>
+                    <TextBlock Text="Back to projects"/>
                   </StackPanel>
                 </Button>
               </StackPanel>
             </Border>
           </StackPanel>
         </ScrollViewer>
+        <Grid x:Name="EditorPanel" Classes="editor" IsVisible="{Binding ShowEditor}" IsEnabled="{Binding CanCreate}" RowDefinitions="Auto,*" RowSpacing="20">
+          <Grid x:Name="EditorHeader" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="16">
+            <Button x:Name="EditorBreadcrumb" Classes="breadcrumb" Click="Projects_Click" AutomationProperties.Name="Projects">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Image Source="{StaticResource BackNavigationImage}" Width="18" Height="18"/>
+                <TextBlock Text="Projects"/>
+              </StackPanel>
+            </Button>
+            <TextBlock x:Name="EditorTitle" Grid.Row="1" Classes="editor-title" Text="{Binding ProjectName}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ProjectName}"/>
+            <Grid x:Name="EditorRename" Grid.Row="2" ColumnDefinitions="*,160" ColumnSpacing="16" Margin="0,0,16,0">
+              <TextBox Classes="project-name" Text="{Binding RenameName, Mode=TwoWay}" AutomationProperties.Name="New project name"/>
+              <Button Grid.Column="1" Classes="editor-action rename-project" Content="Rename project" Click="Rename_Click" IsEnabled="{Binding CanCopy}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
+            </Grid>
+            <WrapPanel x:Name="EditorToolbar" Grid.Row="3" Orientation="Horizontal">
+              <Button Classes="primary editor-action" Click="AddFiles_Click" Margin="0,0,16,0" AutomationProperties.Name="Add files">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <Image Source="{StaticResource FilesActionImage}" Width="22" Height="22"/>
+                  <TextBlock Text="Add files"/>
+                </StackPanel>
+              </Button>
+              <Button Classes="editor-action" Click="AddFolders_Click" Margin="0,0,16,0" AutomationProperties.Name="Add folders">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <Image Source="{StaticResource MoveNavigationImage}" Width="22" Height="22"/>
+                  <TextBlock Text="Add folders"/>
+                </StackPanel>
+              </Button>
+              <Button Classes="editor-action" Click="Projects_Click" AutomationProperties.Name="Back to projects">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <Image Source="{StaticResource BackNavigationImage}" Width="22" Height="22"/>
+                  <TextBlock Text="Back"/>
+                </StackPanel>
+              </Button>
+            </WrapPanel>
+            <TextBlock x:Name="EditorNote" Grid.Row="4" Classes="muted editor-note" Text="Folders include all content present at the time of the operation. Removing an item only changes the registry." ToolTip.Tip="Folders include all content present at the time of the operation. Removing an item only changes the registry."/>
+            <Button x:Name="EditorDeactivate" Grid.Row="5" Classes="danger editor-action" Click="Deactivate_Click" IsEnabled="{Binding CanCopy}" HorizontalAlignment="Left" AutomationProperties.Name="Deactivate project" ToolTip.Tip="Hide this project from the active list. Registered items, backups and the reserved name are preserved.">
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <Image Source="{StaticResource TrashActionImage}" Width="22" Height="22"/>
+                <TextBlock Text="Deactivate project"/>
+              </StackPanel>
+            </Button>
+            <Border x:Name="EditorDivider" Grid.Row="6" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"/>
+          </Grid>
+          <Grid Grid.Row="1">
+            <Border Classes="card editor-empty" IsVisible="{Binding NoItems}">
+              <Grid Classes="editor-empty-content" RowDefinitions="*,Auto,Auto,Auto" RowSpacing="12" MaxWidth="540" HorizontalAlignment="Stretch">
+                <Viewbox MaxWidth="160" MaxHeight="160" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Center" VerticalAlignment="Center">
+                  <Image Source="{StaticResource EmptyProjectsImage}" Width="220" Height="220"/>
+                </Viewbox>
+                <TextBlock Grid.Row="1" Classes="empty-title editor-empty-title" Text="No items configured yet" TextAlignment="Center"/>
+                <TextBlock Grid.Row="2" Classes="muted editor-empty-description" Text="Add files or folders to this project to include them in copy, move, or restore operations." TextAlignment="Center"/>
+                <Button Grid.Row="3" Classes="primary editor-action" Click="AddFiles_Click" HorizontalAlignment="Center" AutomationProperties.Name="Add files">
+                  <StackPanel Orientation="Horizontal" Spacing="10">
+                    <PathIcon Data="{StaticResource AddIcon}" Width="20" Height="20"/>
+                    <TextBlock Text="Add files"/>
+                  </StackPanel>
+                </Button>
+              </Grid>
+            </Border>
+            <ScrollViewer IsVisible="{Binding HasItems}" HorizontalScrollBarVisibility="Disabled">
+              <ItemsControl ItemsSource="{Binding Items}" VerticalAlignment="Top">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="core:SelectedItem">
+                    <Border Classes="card" Margin="0,0,0,8">
+                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel Spacing="8">
+                          <StackPanel Orientation="Horizontal" Spacing="8">
+                            <PathIcon Loaded="ItemIcon_Loaded"/>
+                            <TextBlock FontWeight="SemiBold" Text="{Binding Type}"/>
+                          </StackPanel>
+                          <SelectableTextBlock Text="{Binding Path}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" Classes="danger" Content="Remove" Click="Remove_Click" VerticalAlignment="Center"/>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </Grid>
+        </Grid>
         <Border Grid.Row="1" IsVisible="{Binding HasMessage}" Classes.success="{Binding MessageSuccess}" Classes.error="{Binding MessageError}" Padding="12" CornerRadius="8" Margin="0,16,0,0">
-          <ScrollViewer MaxHeight="100">
+          <ScrollViewer x:Name="StatusScroll" MaxHeight="100">
             <TextBlock Text="{Binding StatusMessage}" Classes.success="{Binding MessageSuccess}" Classes.error="{Binding MessageError}"/>
           </ScrollViewer>
         </Border>

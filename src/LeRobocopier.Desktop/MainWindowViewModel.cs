@@ -89,6 +89,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public bool HasSelection => Selected is not null;
     public bool NoSelection => !HasSelection;
     public bool NoItems => Items.Count == 0;
+    public bool HasItems => !NoItems;
     public bool HasProjects => Projects.Count > 0;
     public bool HasMessage => Message.Length > 0;
     public bool MessageError => messageError;
@@ -99,6 +100,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public bool ShowEditor => panel == MainPanel.Editor;
     public IReadOnlyList<SelectedItem> Items => Selected?.Items ?? Array.Empty<SelectedItem>();
     public string ProjectName => Selected?.Name ?? "";
+    public string ProjectBackupFolder => Selected is null ? "" : Path.Combine(BackupRoot, Selected.Name);
     public bool NoProjects => CanCreate && Projects.Count == 0;
     public string Message
     {
@@ -125,17 +127,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             selected = value ?? Projects.FirstOrDefault(project => project.Id == selected?.Id);
             RenameName = selected?.Name ?? "";
             Notify();
-            Notify(nameof(Selection));
             Notify(nameof(HasSelection));
             Notify(nameof(NoSelection));
             Notify(nameof(NoItems));
+            Notify(nameof(HasItems));
             Notify(nameof(Items));
             Notify(nameof(ProjectName));
+            Notify(nameof(ProjectBackupFolder));
             Notify(nameof(CanCopy));
             Notify(nameof(CanRestore));
         }
     }
-    public string Selection => Selected is null ? "Select a project or create a new one to get started." : $"Selected project: {Selected.Name}";
 
     public MainWindowViewModel()
     {
@@ -200,6 +202,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         Notify(nameof(MessageSuccess));
         Notify(nameof(StatusMessage));
     }
+
+    public void ClearMessage() => Message = "";
 
     public void Rename()
     {
@@ -269,12 +273,15 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public void AbandonCopy(CopyPlan plan) => registry!.AbandonCopy(plan);
 
-    public void RefreshConfirmation()
+    public void RefreshAfterOperation()
     {
+        if (Selected is { } project && registry is not null)
+            UpdateProject(registry.State.Projects.First(current => current.Id == project.Id));
         Notify(nameof(ConfirmCopy));
         Notify(nameof(ConfirmRestore));
         Notify(nameof(ConfirmMove));
         Notify(nameof(BackupRoot));
+        Notify(nameof(ProjectBackupFolder));
     }
 
     public void Dispose() => registry?.Dispose();
