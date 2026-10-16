@@ -1,15 +1,25 @@
+﻿![Le Robocopier project workspace](assets/lerobocopier-repo-readme-screen.png)
+
 # Le Robocopier
 
-Aplicativo desktop C#/.NET 10 e Avalonia para organizar backups por Projeto, com cadastro persistido em XML.
+**Your projects. Your files. Everything in its place.**
 
-Funcionalidades implementadas:
+Le Robocopier brings your backups into one clear, organized workspace. Keep work documents, personal files, and client projects grouped by what matters to you, with a dedicated backup for each project.
 
-- Cadastro de projetos pelo botão Novo, com salvamento automático.
-- Cards de projetos ativos com seleção de um único projeto.
-- Painel de Configurações com a base de backup e as preferências de confirmação.
-- Validação de nomes vazios, inválidos ou repetidos, incluindo projetos inativos.
-- Preservação do cadastro anterior em falhas de gravação e bloqueio do cadastro quando o XML existente é ilegível.
+## Make room for what matters
 
-Copiar, Mover e Restaurar estão indisponíveis. A base de backup e as preferências são exibidas para consulta.
+Choose the files and folders that belong together, give your project a name, and keep it within easy reach. A clean layout helps you find your projects and focus on the task at hand.
 
-Configuração: `%LOCALAPPDATA%\LeRobocopier\settings.xml` no Windows; `$XDG_CONFIG_HOME/LeRobocopier/settings.xml` no Linux, com `~/.config` quando XDG está ausente, vazio ou relativo. A base inicial é `LeRobocopier/Backups` dentro da pasta do usuário. O XML é criado ao salvar o primeiro projeto. Se o arquivo estiver ilegível, ele deve ser corrigido antes de reiniciar o aplicativo.
+## Copy, move, restore
+
+- **Copy** your project's files to its backup while keeping the originals where they are.
+- **Move** files into the backup, freeing their original location after the copies have been checked.
+- **Restore** backed-up items to their original locations when you need them again.
+
+Follow each operation's progress and review its results, so you can see what happened to your files.
+
+## A workspace that grows with you
+
+Rename projects as your work evolves. Set inactive projects aside while keeping their backups, and bring them back when you need them. Change your backup location from Settings to keep your workspace aligned with the way you work.
+
+**Bring order to your backups. Get back to your projects.**
