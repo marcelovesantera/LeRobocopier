@@ -1,56 +1,27 @@
 <Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:LeRobocopier.Desktop" xmlns:core="using:LeRobocopier.Core" x:Class="LeRobocopier.Desktop.MainWindow" x:DataType="local:MainWindowViewModel" Title="Le Robocopier" Width="1200" Height="760" MinWidth="1000" MinHeight="480">
   <Grid>
-    <Grid x:Name="Shell" ColumnDefinitions="208,*" IsVisible="False">
-      <Border Background="{StaticResource SidebarBrush}" Padding="16,24">
-        <DockPanel>
-          <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,20,0,0">
-            <StackPanel Orientation="Horizontal" Spacing="12">
-              <Button Classes="navigation-tool" Classes.selected="{Binding ProjectsNavigationSelected}" Click="Projects_Click" IsEnabled="{Binding CanNavigate}" ToolTip.Tip="Projects" AutomationProperties.Name="Projects">
-                <Image Source="{StaticResource ProjectsNavigationImage}" Width="20" Height="20"/>
-              </Button>
-              <Button Classes="navigation-tool" Classes.selected="{Binding ShowSettings}" Click="Settings_Click" IsEnabled="{Binding CanNavigate}" ToolTip.Tip="Settings" AutomationProperties.Name="Settings">
-                <Image Source="{StaticResource SettingsNavigationImage}" Width="20" Height="20"/>
-              </Button>
-            </StackPanel>
-          </Border>
-          <StackPanel Spacing="12">
-            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,24">
-              <Image Source="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png" Width="32" Height="32" Stretch="Uniform"/>
-              <TextBlock Text="Le Robocopier" FontSize="17" FontWeight="Bold" VerticalAlignment="Center"/>
-            </StackPanel>
-            <StackPanel Spacing="4">
-              <Button Classes="nav" Click="Copy_Click" IsEnabled="{Binding CanCopy}" AutomationProperties.Name="Copy">
-                <StackPanel Orientation="Horizontal" Spacing="12">
-                  <Image Source="{StaticResource CopyNavigationImage}" Width="22" Height="22"/>
-                  <TextBlock Text="Copy"/>
-                </StackPanel>
-              </Button>
-              <Button Classes="nav" Click="Move_Click" IsEnabled="{Binding CanCopy}" AutomationProperties.Name="Move">
-                <StackPanel Orientation="Horizontal" Spacing="12">
-                  <Image Source="{StaticResource MoveNavigationImage}" Width="22" Height="22"/>
-                  <TextBlock Text="Move"/>
-                </StackPanel>
-              </Button>
-              <Button Classes="nav" Click="Restore_Click" IsEnabled="{Binding CanRestore}" AutomationProperties.Name="Restore">
-                <StackPanel Orientation="Horizontal" Spacing="12">
-                  <Image Source="{StaticResource RestoreNavigationImage}" Width="22" Height="22"/>
-                  <TextBlock Text="Restore"/>
-                </StackPanel>
-              </Button>
-            </StackPanel>
+    <Grid x:Name="Shell" RowDefinitions="Auto,*" IsVisible="False">
+      <Border Classes="shell-header" Background="{StaticResource SidebarBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+            <Image Source="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png" Width="32" Height="32"/>
+            <TextBlock Text="Le Robocopier" FontSize="19" FontWeight="Bold" VerticalAlignment="Center"/>
           </StackPanel>
-        </DockPanel>
+          <Button Grid.Column="1" Classes="navigation-tool" Classes.selected="{Binding ShowSettings}" Click="Settings_Click" IsEnabled="{Binding CanNavigate}" ToolTip.Tip="Settings" AutomationProperties.Name="Settings">
+            <Image Source="{StaticResource SettingsNavigationImage}" Width="22" Height="22"/>
+          </Button>
+        </Grid>
       </Border>
-      <Grid x:Name="MainContent" Grid.Column="1" RowDefinitions="*,Auto" Margin="24" IsEnabled="{Binding CanNavigate}">
-        <Grid IsVisible="{Binding ShowProjects}" RowDefinitions="Auto,*" RowSpacing="24">
+      <Grid x:Name="MainContent" Grid.Row="1" RowDefinitions="*,Auto" IsEnabled="{Binding CanNavigate}">
+        <Grid Classes="projects-page" IsVisible="{Binding ShowProjects}" RowDefinitions="Auto,*">
           <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
             <StackPanel Spacing="8">
               <TextBlock Classes="projects-title" Text="Projects"/>
-              <TextBlock Classes="muted" Text="Select a project or create a new one to get started." FontSize="16"/>
+              <TextBlock Classes="muted projects-description" Text="Select a project or create a new one to get started." FontSize="16"/>
             </StackPanel>
             <Button Grid.Column="1" Classes="primary new-project" Click="NewProject_Click" IsEnabled="{Binding CanCreate}" VerticalAlignment="Center" AutomationProperties.Name="New project">
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <PathIcon Data="{StaticResource AddIcon}" Width="18" Height="18" VerticalAlignment="Center"/>
+                <Image Source="{StaticResource AddActionImage}" Width="18" Height="18" VerticalAlignment="Center"/>
                 <TextBlock Text="New project" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
@@ -65,7 +36,7 @@
                   <TextBlock Classes="muted" Text="Reactivate inactive projects in Settings." IsVisible="{Binding HasInactiveProjects}" TextAlignment="Center"/>
                   <Button Classes="primary new-project" Click="NewProject_Click" IsEnabled="{Binding CanCreate}" HorizontalAlignment="Center" AutomationProperties.Name="New project" Margin="0,8,0,0">
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                      <PathIcon Data="{StaticResource AddIcon}" Width="18" Height="18" VerticalAlignment="Center"/>
+                      <Image Source="{StaticResource AddActionImage}" Width="18" Height="18" VerticalAlignment="Center"/>
                       <TextBlock Text="New project" VerticalAlignment="Center"/>
                     </StackPanel>
                   </Button>
@@ -73,23 +44,30 @@
               </Grid>
             </ScrollViewer>
           </Border>
-          <Grid x:Name="ProjectLayout" Grid.Row="1" ColumnDefinitions="*,360" ColumnSpacing="20" IsVisible="{Binding HasProjects}">
+          <Grid x:Name="ProjectLayout" Grid.Row="1" ColumnDefinitions="*,480" ColumnSpacing="20" IsVisible="{Binding HasProjects}">
             <Border Classes="card project-list-surface">
               <ListBox x:Name="ProjectList" Classes="projects" ItemsSource="{Binding Projects}" SelectedItem="{Binding Selected, Mode=TwoWay}" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="core:Project">
-                    <Border Classes="project-card">
+                    <Border Classes="project-card" DoubleTapped="ProjectCard_DoubleTapped">
                       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
-                        <Image Source="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png" Width="36" Height="36" VerticalAlignment="Top" Margin="0,2,0,0"/>
-                        <StackPanel Grid.Column="1" Spacing="6">
+                        <Image Source="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png" Width="36" Height="36" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Column="1" Spacing="4" MinWidth="0" VerticalAlignment="Center">
                           <TextBlock Classes="card-title" Text="{Binding Name}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Name}"/>
-                          <TextBlock Classes="muted" Text="{Binding Items.Count, StringFormat='{}{0} configured item(s)'}"/>
-                          <TextBlock Classes="muted" ToolTip.Tip="Most recent operation started; this does not indicate success.">
-                            <Run Text="Last run: "/>
-                            <Run Text="{Binding LastOperation, TargetNullValue='Not recorded'}"/>
-                          </TextBlock>
+                          <TextBlock Classes="muted" Text="{Binding Items.Count, StringFormat='{}{0} configured item(s)'}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Items.Count, StringFormat='{}{0} configured item(s)'}"/>
                         </StackPanel>
-                        <Button Grid.Column="2" Classes="project-open" Content="Open" Click="Open_Click" VerticalAlignment="Center" AutomationProperties.Name="{Binding Name, StringFormat='Open {0}'}"/>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" IsEnabled="{Binding $parent[Window].((local:MainWindowViewModel)DataContext).CanCreate}">
+                          <Button Classes="project-operation" Click="Copy_Click" ToolTip.Tip="{Binding Name, StringFormat='Copy {0}'}" AutomationProperties.Name="{Binding Name, StringFormat='Copy {0}'}">
+                            <Image Source="{StaticResource CopyActionImage}" Width="20" Height="20"/>
+                          </Button>
+                          <Button Classes="project-operation" Click="Move_Click" ToolTip.Tip="{Binding Name, StringFormat='Move {0}'}" AutomationProperties.Name="{Binding Name, StringFormat='Move {0}'}">
+                            <Image Source="{StaticResource MoveActionImage}" Width="20" Height="20"/>
+                          </Button>
+                          <Button Classes="project-operation" Click="Restore_Click" ToolTip.Tip="{Binding Name, StringFormat='Restore {0}'}" AutomationProperties.Name="{Binding Name, StringFormat='Restore {0}'}">
+                            <Image Source="{StaticResource RestoreActionImage}" Width="20" Height="20"/>
+                          </Button>
+                          <Button Classes="project-open" Content="Open" Click="Open_Click" AutomationProperties.Name="{Binding Name, StringFormat='Open {0}'}"/>
+                        </StackPanel>
                       </Grid>
                     </Border>
                   </DataTemplate>
@@ -99,41 +77,38 @@
             <Border x:Name="ProjectSummary" Grid.Column="1" Classes="card project-details" ClipToBounds="True">
               <Grid>
                 <TextBlock Classes="muted" Text="Select a project to view its details." ToolTip.Tip="Select a project to view its details." IsVisible="{Binding NoSelection}"/>
-                <Grid RowDefinitions="*,Auto" RowSpacing="16" IsVisible="{Binding HasSelection}">
-                  <Grid ClipToBounds="True">
-                    <StackPanel Spacing="20" VerticalAlignment="Top">
-                      <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
-                        <Image Source="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png" Width="48" Height="48" VerticalAlignment="Top"/>
-                        <StackPanel Grid.Column="1" Spacing="6">
-                          <TextBlock Classes="card-title" Text="{Binding ProjectName}" ToolTip.Tip="{Binding ProjectName}" FontSize="22"/>
-                          <TextBlock Classes="muted" Text="{Binding Items.Count, StringFormat='{}{0} configured item(s)'}" ToolTip.Tip="{Binding Items.Count, StringFormat='{}{0} configured item(s)'}"/>
-                        </StackPanel>
-                      </Grid>
-                      <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"/>
-                      <Grid ColumnDefinitions="Auto,104,*" ColumnSpacing="12">
-                        <Image Source="{StaticResource CopyNavigationImage}" Width="22" Height="22" VerticalAlignment="Top"/>
-                        <TextBlock Grid.Column="1" Text="Operations" ToolTip.Tip="Operations"/>
-                        <TextBlock Grid.Column="2" Classes="muted" Text="Copy, Move, Restore" ToolTip.Tip="Copy, Move, Restore"/>
-                      </Grid>
-                      <Grid ColumnDefinitions="Auto,104,*" ColumnSpacing="12">
-                        <Image Source="{StaticResource MoveNavigationImage}" Width="22" Height="22" VerticalAlignment="Top"/>
-                        <TextBlock Grid.Column="1" Text="Source folder" ToolTip.Tip="Source folder"/>
-                        <TextBlock Grid.Column="2" Classes="muted" Text="{Binding ProjectSourceFolder}" ToolTip.Tip="{Binding ProjectSourceFolder}"/>
-                      </Grid>
-                      <Grid ColumnDefinitions="Auto,104,*" ColumnSpacing="12">
-                        <Image Source="{StaticResource MoveNavigationImage}" Width="22" Height="22" VerticalAlignment="Top"/>
-                        <TextBlock Grid.Column="1" Text="Backup folder" ToolTip.Tip="Backup folder"/>
-                        <TextBlock Grid.Column="2" Classes="muted" Text="{Binding ProjectBackupFolder}" ToolTip.Tip="{Binding ProjectBackupFolder}"/>
-                      </Grid>
-                    </StackPanel>
+                <StackPanel x:Name="ProjectSummaryDetails" Spacing="10" VerticalAlignment="Top" IsVisible="{Binding HasSelection}">
+                  <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                    <Image Source="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png" Width="32" Height="32" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" Classes="card-title" Text="{Binding ProjectName}" ToolTip.Tip="{Binding ProjectName}" FontSize="20" VerticalAlignment="Center"/>
                   </Grid>
-                  <Button Grid.Row="1" Click="OpenSelected_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" AutomationProperties.Name="Edit project">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                      <Image Source="{StaticResource SettingsNavigationImage}" Width="20" Height="20"/>
-                      <TextBlock Text="Edit project" ToolTip.Tip="Edit project"/>
-                    </StackPanel>
-                  </Button>
-                </Grid>
+                  <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"/>
+                  <Grid ColumnDefinitions="24,104,*" ColumnSpacing="12">
+                    <Image Source="{StaticResource SummaryFolderImage}" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" Text="Source folder" ToolTip.Tip="Source folder" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="2" Classes="muted" Text="{Binding ProjectSourceFolder}" ToolTip.Tip="{Binding ProjectSourceFolder}" VerticalAlignment="Center"/>
+                  </Grid>
+                  <Grid ColumnDefinitions="24,104,*" ColumnSpacing="12">
+                    <Image Source="{StaticResource SummaryFolderImage}" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" Text="Backup folder" ToolTip.Tip="Backup folder" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="2" Classes="muted" Text="{Binding ProjectBackupFolder}" ToolTip.Tip="{Binding ProjectBackupFolder}" VerticalAlignment="Center"/>
+                  </Grid>
+                  <Grid ColumnDefinitions="24,104,*" ColumnSpacing="12">
+                    <Image Source="{StaticResource SummaryDestinationImage}" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" Text="Destination" ToolTip.Tip="Backup destination mode" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="2" Classes="muted" Text="{Binding ProjectDestinationMode}" ToolTip.Tip="{Binding ProjectDestinationMode}" VerticalAlignment="Center"/>
+                  </Grid>
+                  <Grid ColumnDefinitions="24,104,*" ColumnSpacing="12">
+                    <Image Source="{StaticResource SummaryClockImage}" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" Text="Last run" ToolTip.Tip="Operation and local date and time of the last started attempt; this does not indicate success." VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="2" Classes="muted" Text="{Binding ProjectLastRun}" ToolTip.Tip="{Binding ProjectLastRunDescription}" VerticalAlignment="Center"/>
+                  </Grid>
+                  <Grid ColumnDefinitions="24,104,*" ColumnSpacing="12">
+                    <Image Source="{StaticResource SummaryItemsImage}" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" Text="Configured" ToolTip.Tip="Registered files and folders; folder contents are counted only during operations." VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="2" Classes="muted" Text="{Binding ProjectItemCounts}" ToolTip.Tip="{Binding ProjectItemCounts}" VerticalAlignment="Center"/>
+                  </Grid>
+                </StackPanel>
               </Grid>
             </Border>
           </Grid>
@@ -141,6 +116,12 @@
         <ScrollViewer IsVisible="{Binding ShowSettings}" HorizontalScrollBarVisibility="Disabled">
           <StackPanel Spacing="20">
             <StackPanel Spacing="8">
+              <Button Classes="breadcrumb" Click="Projects_Click" ToolTip.Tip="Back to projects" AutomationProperties.Name="Back to projects">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Image Source="{StaticResource BackNavigationImage}" Width="18" Height="18" VerticalAlignment="Center"/>
+                  <TextBlock Text="Projects" VerticalAlignment="Center"/>
+                </StackPanel>
+              </Button>
               <TextBlock Classes="settings-title" Text="Settings"/>
               <TextBlock Classes="muted" Text="Configure how Le Robocopier works across all your projects." FontSize="16"/>
             </StackPanel>
@@ -212,22 +193,16 @@
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <Button Click="Projects_Click" Margin="0,4,0,0" AutomationProperties.Name="Back to projects">
-                  <StackPanel Orientation="Horizontal" Spacing="10">
-                    <Image Source="{StaticResource BackNavigationImage}" Width="20" Height="20"/>
-                    <TextBlock Text="Back to projects"/>
-                  </StackPanel>
-                </Button>
               </StackPanel>
             </Border>
           </StackPanel>
         </ScrollViewer>
         <Grid x:Name="EditorPanel" Classes="editor" IsVisible="{Binding ShowEditor}" IsEnabled="{Binding CanCreate}" RowDefinitions="Auto,*" RowSpacing="20">
           <Grid x:Name="EditorHeader" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="16">
-            <Button x:Name="EditorBreadcrumb" Classes="breadcrumb" Click="Projects_Click" AutomationProperties.Name="Projects">
+            <Button x:Name="EditorBreadcrumb" Classes="breadcrumb" Click="Projects_Click" ToolTip.Tip="Back to projects" AutomationProperties.Name="Back to projects">
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Image Source="{StaticResource BackNavigationImage}" Width="18" Height="18"/>
-                <TextBlock Text="Projects"/>
+                <Image Source="{StaticResource BackNavigationImage}" Width="18" Height="18" VerticalAlignment="Center"/>
+                <TextBlock Text="Projects" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
             <TextBlock x:Name="EditorTitle" Grid.Row="1" Classes="editor-title" Text="{Binding ProjectName}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ProjectName}"/>
@@ -275,7 +250,7 @@
                 <TextBlock Grid.Row="2" Classes="muted editor-empty-description" Text="Add files or folders to this project to include them in copy, move, or restore operations." TextAlignment="Center"/>
                 <Button Grid.Row="3" Classes="primary editor-action" Click="AddFiles_Click" HorizontalAlignment="Center" AutomationProperties.Name="Add files">
                   <StackPanel Orientation="Horizontal" Spacing="10">
-                    <PathIcon Data="{StaticResource AddIcon}" Width="20" Height="20"/>
+                    <Image Source="{StaticResource AddActionImage}" Width="20" Height="20"/>
                     <TextBlock Text="Add files"/>
                   </StackPanel>
                 </Button>
@@ -289,7 +264,7 @@
                       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                         <StackPanel Spacing="8">
                           <StackPanel Orientation="Horizontal" Spacing="8">
-                            <PathIcon Loaded="ItemIcon_Loaded"/>
+                            <Image Width="24" Height="24" Loaded="ItemIcon_Loaded"/>
                             <TextBlock FontWeight="SemiBold" Text="{Binding Type}"/>
                           </StackPanel>
                           <SelectableTextBlock Text="{Binding Path}" TextWrapping="Wrap"/>

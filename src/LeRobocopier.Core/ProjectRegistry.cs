@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -167,7 +168,10 @@ public sealed partial class ProjectRegistry : IDisposable
     {
         var backupRoot = project.BackupRootOverride ?? configuration.BackupRoot;
         if (project.SourceRoot is { } sourceRoot)
+        {
+            ValidateCopyPath(sourceRoot, ItemType.Folder, true);
             ValidateItem(new SelectedItem(ItemType.Folder, sourceRoot), Array.Empty<SelectedItem>(), backupRoot);
+        }
         foreach (var item in project.Items) ValidateItem(item, Array.Empty<SelectedItem>(), backupRoot);
         var backup = NormalizePath(Path.Combine(backupRoot, project.Name));
         foreach (var registered in configuration.Projects.Where(current => current.Id != project.Id).Append(project))
@@ -373,6 +377,7 @@ public sealed partial class ProjectRegistry : IDisposable
                 saved.Projects.Count != State.Projects.Count || saved.Projects.Where((project, index) =>
                     project.Id != State.Projects[index].Id || project.Name != State.Projects[index].Name ||
                     project.Active != State.Projects[index].Active || project.LastOperation != State.Projects[index].LastOperation ||
+                    project.LastOperationStartedAt != State.Projects[index].LastOperationStartedAt ||
                     project.SourceRoot != State.Projects[index].SourceRoot || project.BackupRootOverride != State.Projects[index].BackupRootOverride ||
                     !project.Items.SequenceEqual(State.Projects[index].Items)).Any())
                 throw new InvalidDataException("The saved configuration changed outside the application.");
@@ -681,7 +686,9 @@ public sealed partial class ProjectRegistry : IDisposable
                         ProjectOperation.Move => "Mover",
                         ProjectOperation.Restore => "Restaurar",
                         _ => throw new InvalidOperationException("Unknown last operation.")
-                    }), project.SourceRoot is null ? null : new XAttribute("pastaOrigem", project.SourceRoot),
+                    }), project.LastOperationStartedAt is null ? null :
+                    new XAttribute("ultimoProcessoEm", project.LastOperationStartedAt.Value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture)),
+                project.SourceRoot is null ? null : new XAttribute("pastaOrigem", project.SourceRoot),
                 project.BackupRootOverride is null ? null : new XAttribute("baseBackup", project.BackupRootOverride),
                 new XElement("Itens", project.Items.Select(item =>
                     new XElement("Item", new XAttribute("tipo", item.Type == ItemType.File ? "Arquivo" : "Pasta"),
@@ -738,7 +745,7 @@ public sealed partial class ProjectRegistry : IDisposable
         {
             if (node.Name != "Projeto") throw new InvalidDataException("Unknown project record.");
             var attributes = new List<string> { "id", "nome", "ativo" };
-            foreach (var optional in new[] { "ultimoProcesso", "pastaOrigem", "baseBackup" })
+            foreach (var optional in new[] { "ultimoProcesso", "ultimoProcessoEm", "pastaOrigem", "baseBackup" })
                 if (node.Attribute(optional) is not null) attributes.Add(optional);
             ValidateStructure(node, attributes.ToArray(), ["Itens"]);
             var sourceRoot = node.Attribute("pastaOrigem") is { } sourceAttribute ? NormalizePath(sourceAttribute.Value) : null;
@@ -751,6 +758,14 @@ public sealed partial class ProjectRegistry : IDisposable
                 "Restaurar" => ProjectOperation.Restore,
                 _ => throw new InvalidDataException("Unknown last operation.")
             };
+            DateTimeOffset? lastOperationStartedAt = null;
+            if (node.Attribute("ultimoProcessoEm") is { } startedAtAttribute)
+            {
+                if (lastOperation is null || !DateTimeOffset.TryParseExact(startedAtAttribute.Value, "O",
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var startedAt) || startedAt.Offset != TimeSpan.Zero)
+                    throw new InvalidDataException("Invalid last operation start time.");
+                lastOperationStartedAt = startedAt;
+            }
             var id = Guid.Parse((string?)node.Attribute("id") ?? "");
             var name = (string?)node.Attribute("nome") ?? "";
             ValidateName(name);
@@ -776,7 +791,11 @@ public sealed partial class ProjectRegistry : IDisposable
             }
             projects.Add(new Project(id, name,
                 (bool?)node.Attribute("ativo") ?? throw new InvalidDataException("Missing active flag."),
-                items.AsReadOnly()) { LastOperation = lastOperation, SourceRoot = sourceRoot, BackupRootOverride = backupOverride });
+                items.AsReadOnly())
+            {
+                LastOperation = lastOperation, LastOperationStartedAt = lastOperationStartedAt,
+                SourceRoot = sourceRoot, BackupRootOverride = backupOverride
+            });
         }
         var configuration = new Configuration(1, backupRoot, preferences, projects.AsReadOnly());
         foreach (var project in projects) ValidateProjectPaths(project, configuration);

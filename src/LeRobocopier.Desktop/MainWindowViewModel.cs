@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using LeRobocopier.Core;
 
@@ -85,7 +86,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
     }
     public bool CanNavigate => !IsBusy;
-    public bool ProjectsNavigationSelected => !ShowSettings;
     public bool HasSelection => Selected is not null;
     public bool NoSelection => !HasSelection;
     public bool NoItems => Items.Count == 0;
@@ -121,14 +121,29 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public string ProjectSourceFolder => Selected?.SourceRoot ?? "Legacy project (multiple source paths)";
     public string ProjectBackupRoot => Selected?.BackupRootOverride ?? BackupRoot;
     public bool InheritsBackupRoot => Selected?.BackupRootOverride is null;
+    public string ProjectDestinationMode => InheritsBackupRoot ? "Global default" : "Custom base";
+    public string ProjectLastRun => Selected?.LastOperation is { } operation
+        ? $"{operation} \u00b7 {FormatLastRun(Selected.LastOperationStartedAt)}"
+        : "Not recorded";
+    public string ProjectLastRunDescription => Selected?.LastOperation is { } operation
+        ? $"Last attempted operation: {operation}. " +
+            (Selected.LastOperationStartedAt is null ? "Start time not recorded." : $"Started {FormatLastRun(Selected.LastOperationStartedAt)} (local time).") +
+            " This does not indicate success."
+        : "No operation has been recorded.";
+
+    private static string FormatLastRun(DateTimeOffset? startedAt) =>
+        startedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) ?? "Not recorded";
+    public string ProjectItemCounts => $"{Items.Count(item => item.Type == ItemType.File)} file(s), {Items.Count(item => item.Type == ItemType.Folder)} folder(s)";
     public string RenameName { get => renameName; set { renameName = value; Notify(); } }
     public Project? Selected
     {
         get => selected;
         set
         {
-            // Keep an active selection on repeated clicks; allow it to clear after deactivation.
-            selected = value ?? Projects.FirstOrDefault(project => project.Id == selected?.Id);
+            var projects = Projects;
+            selected = projects.FirstOrDefault(project => project.Id == value?.Id)
+                ?? projects.FirstOrDefault(project => project.Id == selected?.Id)
+                ?? projects.FirstOrDefault();
             RenameName = selected?.Name ?? "";
             Notify();
             Notify(nameof(HasSelection));
@@ -141,6 +156,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             Notify(nameof(ProjectSourceFolder));
             Notify(nameof(ProjectBackupRoot));
             Notify(nameof(InheritsBackupRoot));
+            Notify(nameof(ProjectDestinationMode));
+            Notify(nameof(ProjectLastRun));
+            Notify(nameof(ProjectLastRunDescription));
+            Notify(nameof(ProjectItemCounts));
             Notify(nameof(CanCopy));
             Notify(nameof(CanRestore));
         }
@@ -148,7 +167,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public MainWindowViewModel()
     {
-        try { registry = new ProjectRegistry(UserDirectories.Configuration(), UserDirectories.BackupRoot()); }
+        try
+        {
+            registry = new ProjectRegistry(UserDirectories.Configuration(), UserDirectories.BackupRoot());
+            Selected = Projects.FirstOrDefault();
+        }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
         {
             ReportError(error.Message + " Fix the configuration and restart the application.");
@@ -162,7 +185,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         Notify(nameof(ShowProjects));
         Notify(nameof(ShowSettings));
         Notify(nameof(ShowEditor));
-        Notify(nameof(ProjectsNavigationSelected));
+        // Restore the list highlight from the existing selection when returning to Projects.
+        if (destination == MainPanel.Projects) Notify(nameof(Selected));
     }
 
     public void Open(Project project)
@@ -236,6 +260,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     public void SetProjectActive(Guid projectId, bool active)
     {
         if (!CanCreate) return;
+        var selectedProjectDeactivated = !active && Selected?.Id == projectId;
         try
         {
             var updated = registry!.SetProjectActive(projectId, active);
@@ -246,7 +271,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             Notify(nameof(NoProjects));
             Notify(nameof(HasProjects));
             Message = active ? "Project reactivated." : "Project deactivated. Registered items and backups were preserved.";
-            if (!active && ShowEditor && Selected is null) Navigate(MainPanel.Projects);
+            if (selectedProjectDeactivated && ShowEditor) Navigate(MainPanel.Projects);
         }
         catch (Exception error) when (error is ArgumentException or IOException or UnauthorizedAccessException or InvalidOperationException)
         {

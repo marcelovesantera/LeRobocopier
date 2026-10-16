@@ -5,6 +5,7 @@
     <Pen x:Key="NavigationIconPen" Brush="{StaticResource TextPrimaryBrush}" Thickness="1.8" LineCap="Round" LineJoin="Round"/>
     <Pen x:Key="NavigationMenuPen" Brush="{StaticResource TextPrimaryBrush}" Thickness="1.8" LineCap="Square"/>
     <StreamGeometry x:Key="NavigationIconFrame">M0,0 L24,0 L24,24 L0,24 Z</StreamGeometry>
+    <StreamGeometry x:Key="FolderOutlineGeometry">M4.5,4 L9,4 Q9.6,4 10.2,4.6 L12,6.5 L19.5,6.5 Q21,6.5 21,8 L21,19.5 Q21,21 19.5,21 L4.5,21 Q3,21 3,19.5 L3,5.5 Q3,4 4.5,4 Z</StreamGeometry>
     <DrawingImage x:Key="CopyNavigationImage">
       <DrawingImage.Drawing>
         <DrawingGroup>
@@ -19,7 +20,7 @@
       <DrawingImage.Drawing>
         <DrawingGroup>
           <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
-          <GeometryDrawing Brush="#FCFDFF" Pen="{StaticResource NavigationIconPen}" Geometry="M2.75,8 L2.75,5.25 Q2.75,3.5 4.5,3.5 L9,3.5 Q9.8,3.5 10.4,4.1 L12.2,5.9 L19.5,5.9 Q21.25,5.9 21.25,7.65 L21.25,19.25 Q21.25,21 19.5,21 L4.5,21 Q2.75,21 2.75,19.25 Z M2.75,8.5 L21.25,8.5"/>
+          <GeometryDrawing Pen="{StaticResource NavigationIconPen}" Geometry="{StaticResource FolderOutlineGeometry}"/>
         </DrawingGroup>
       </DrawingImage.Drawing>
     </DrawingImage>
@@ -95,6 +96,21 @@
     <SolidColorBrush x:Key="AccentBrush" Color="#0067E8"/>
     <SolidColorBrush x:Key="AccentHoverBrush" Color="#005ACB"/>
     <SolidColorBrush x:Key="AccentPressedBrush" Color="#004DAF"/>
+    <LinearGradientBrush x:Key="PrimaryButtonBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+      <GradientStop Color="#0061DD" Offset="0"/>
+      <GradientStop Color="#0067E8" Offset="0.6"/>
+      <GradientStop Color="#0B6FEA" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="PrimaryButtonHoverBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+      <GradientStop Color="#0054C2" Offset="0"/>
+      <GradientStop Color="#005ACB" Offset="0.6"/>
+      <GradientStop Color="#0862D3" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="PrimaryButtonPressedBrush" StartPoint="0%,0%" EndPoint="0%,100%">
+      <GradientStop Color="#0047A5" Offset="0"/>
+      <GradientStop Color="#004DAF" Offset="0.6"/>
+      <GradientStop Color="#0855B7" Offset="1"/>
+    </LinearGradientBrush>
     <SolidColorBrush x:Key="SelectionBrush" Color="#E8F2FF"/>
     <SolidColorBrush x:Key="SelectionBorderBrush" Color="#A8CEFF"/>
     <SolidColorBrush x:Key="ButtonHoverBrush" Color="#DCEAFF"/>
@@ -110,11 +126,69 @@
     <SolidColorBrush x:Key="DangerHoverBorderBrush" Color="#EAA5AF"/>
     <SolidColorBrush x:Key="OverlayBrush" Color="#660F172A"/>
     <Pen x:Key="SettingsIconPen" Brush="{StaticResource AccentBrush}" Thickness="1.8" LineCap="Round" LineJoin="Round"/>
+    <Pen x:Key="FilesActionPen" Brush="White" Thickness="1.8" LineCap="Round" LineJoin="Round"/>
+    <StreamGeometry x:Key="CopyActionGeometry">M5,17 Q3,17 3,15 L3,4 Q3,2 5,2 L10,2 Q12,2 12,4 M10,7 L15,7 Q15.8,7 16.4,7.6 L20.4,11.6 Q21,12.2 21,13 L21,20 Q21,22 19,22 L10,22 Q8,22 8,20 L8,9 Q8,7 10,7 Z M15,7 L15,11 Q15,13 17,13 L21,13</StreamGeometry>
+    <DrawingImage x:Key="CopyActionImage">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
+          <GeometryDrawing Pen="{StaticResource FilesActionPen}" Geometry="{StaticResource CopyActionGeometry}"/>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
+    <DrawingImage x:Key="MoveActionImage">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
+          <GeometryDrawing Pen="{StaticResource FilesActionPen}" Geometry="M4.5,4 L9,4 Q9.6,4 10.2,4.6 L12,6.5 L19.5,6.5 Q21,6.5 21,8 L21,19.5 Q21,21 19.5,21 L4.5,21 Q3,21 3,19.5 L3,5.5 Q3,4 4.5,4 Z M7,14 L17,14 M13.5,10.5 L17,14 L13.5,17.5"/>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
+    <DrawingImage x:Key="RestoreActionImage">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
+          <GeometryDrawing Pen="{StaticResource FilesActionPen}" Geometry="M3,8 C4.5,4.7 8,3 12,3 C17,3 21,7 21,12 C21,17 17,21 12,21 C8,21 4.5,18.5 3.3,15 M3,3 L3,8 L8,8 M12,7 L12,12 L15.5,14"/>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
     <DrawingImage x:Key="SettingsFolderImage">
       <DrawingImage.Drawing>
         <DrawingGroup>
           <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
-          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="M3,8 L3,5.5 Q3,4 4.5,4 L9,4 L12,7 L19.5,7 Q21,7 21,8.5 L21,19 Q21,20.5 19.5,20.5 L4.5,20.5 Q3,20.5 3,19 Z M3,8 L21,8"/>
+          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="{StaticResource FolderOutlineGeometry}"/>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
+    <DrawingImage x:Key="SummaryFolderImage">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
+          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="{StaticResource FolderOutlineGeometry}"/>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
+    <DrawingImage x:Key="SummaryDestinationImage">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
+          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="M12,22 C10,20 4,14.5 4,9 A8,8 0 1 1 20,9 C20,14.5 14,20 12,22 Z M14.5,9 A2.5,2.5 0 1 1 9.5,9 A2.5,2.5 0 1 1 14.5,9 Z"/>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
+    <DrawingImage x:Key="SummaryClockImage">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
+          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="M21,12 A9,9 0 1 1 3,12 A9,9 0 1 1 21,12 Z M12,7 L12,12 L16,14"/>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
+    <DrawingImage x:Key="SummaryItemsImage">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
+          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="M5,3 L19,3 Q21,3 21,5 L21,19 Q21,21 19,21 L5,21 Q3,21 3,19 L3,5 Q3,3 5,3 Z M10,7 L17,7 M10,12 L17,12 M10,17 L17,17 M6.5,7 L6.5,7.01 M6.5,12 L6.5,12.01 M6.5,17 L6.5,17.01"/>
         </DrawingGroup>
       </DrawingImage.Drawing>
     </DrawingImage>
@@ -122,8 +196,8 @@
       <DrawingImage.Drawing>
         <DrawingGroup>
           <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
-          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="M12,7.5 A3.5,3.5 0 1 1 5,7.5 A3.5,3.5 0 1 1 12,7.5 Z M19.5,8.5 A3,3 0 1 1 13.5,8.5 A3,3 0 1 1 19.5,8.5 Z"/>
-          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="M2.5,20 L2.5,18 C2.5,15.8 4.3,14 6.5,14 L10.5,14 C12.7,14 14.5,15.8 14.5,18 L14.5,20 Z M17.5,14.5 C20,14.5 21.5,16 21.5,18.5 L21.5,20 L18,20"/>
+          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="M12,7.5 A3.5,3.5 0 1 1 5,7.5 A3.5,3.5 0 1 1 12,7.5 Z M20,8.5 A2.5,2.5 0 1 1 15,8.5 A2.5,2.5 0 1 1 20,8.5 Z"/>
+          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="M4,20 Q2.5,20 2.5,18.5 L2.5,18 C2.5,15.8 4.3,14 6.5,14 L10.5,14 C12.7,14 14.5,15.8 14.5,18 L14.5,18.5 Q14.5,20 13,20 Z M17.5,14.5 C20,14.5 21.5,16 21.5,18.5 L21.5,19 Q21.5,20 20.5,20 L18,20"/>
         </DrawingGroup>
       </DrawingImage.Drawing>
     </DrawingImage>
@@ -135,13 +209,28 @@
         </DrawingGroup>
       </DrawingImage.Drawing>
     </DrawingImage>
-    <Pen x:Key="FilesActionPen" Brush="White" Thickness="1.8" LineCap="Round" LineJoin="Round"/>
     <Pen x:Key="DangerIconPen" Brush="{StaticResource DangerBrush}" Thickness="1.8" LineCap="Round" LineJoin="Round"/>
+    <DrawingImage x:Key="AddActionImage">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
+          <GeometryDrawing Pen="{StaticResource FilesActionPen}" Geometry="M12,4 L12,20 M4,12 L20,12"/>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
+    <DrawingImage x:Key="FileItemImage">
+      <DrawingImage.Drawing>
+        <DrawingGroup>
+          <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
+          <GeometryDrawing Pen="{StaticResource SettingsIconPen}" Geometry="M6,3 L14,3 Q14.8,3 15.4,3.6 L20.4,8.6 Q21,9.2 21,10 L21,20 Q21,22 19,22 L6,22 Q4,22 4,20 L4,5 Q4,3 6,3 Z M14,3 L14,8 Q14,10 16,10 L21,10"/>
+        </DrawingGroup>
+      </DrawingImage.Drawing>
+    </DrawingImage>
     <DrawingImage x:Key="FilesActionImage">
       <DrawingImage.Drawing>
         <DrawingGroup>
           <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
-          <GeometryDrawing Pen="{StaticResource FilesActionPen}" Geometry="M6,18 L5,18 Q3,18 3,16 L3,4 Q3,2 5,2 L11,2 Q13,2 13,4 L13,5 M9,6 L15,6 L21,12 L21,20 Q21,22 19,22 L9,22 Q7,22 7,20 L7,8 Q7,6 9,6 Z M15,6 L15,10 Q15,12 17,12 L21,12"/>
+          <GeometryDrawing Pen="{StaticResource FilesActionPen}" Geometry="{StaticResource CopyActionGeometry}"/>
         </DrawingGroup>
       </DrawingImage.Drawing>
     </DrawingImage>
@@ -149,7 +238,7 @@
       <DrawingImage.Drawing>
         <DrawingGroup>
           <GeometryDrawing Brush="Transparent" Geometry="{StaticResource NavigationIconFrame}"/>
-          <GeometryDrawing Pen="{StaticResource DangerIconPen}" Geometry="M4,6 L20,6 M9,6 L9,3 L15,3 L15,6 M6,6 L7,21 L17,21 L18,6 M10,10 L10,17 M14,10 L14,17"/>
+          <GeometryDrawing Pen="{StaticResource DangerIconPen}" Geometry="M4,6 L20,6 M9,6 L9,4 Q9,3 10,3 L14,3 Q15,3 15,4 L15,6 M6,9 L6.8,19 Q6.95,21 8.5,21 L15.5,21 Q17.05,21 17.2,19 L18,9 M10,10 L10,17 M14,10 L14,17"/>
         </DrawingGroup>
       </DrawingImage.Drawing>
     </DrawingImage>
@@ -162,6 +251,25 @@
   </Application.Resources>
   <Application.Styles>
     <FluentTheme/>
+    <Style Selector="Border.folder-section">
+      <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="{StaticResource CardRadius}"/>
+    </Style>
+    <Style Selector="Border.folder-path">
+      <Setter Property="Background" Value="{StaticResource CanvasBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="{StaticResource ControlRadius}"/>
+    </Style>
+    <Style Selector="Border.folder-error">
+      <Setter Property="Background" Value="{StaticResource DangerSurfaceBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource DangerBorderBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="{StaticResource ControlRadius}"/>
+      <Setter Property="TextElement.Foreground" Value="{StaticResource DangerBrush}"/>
+    </Style>
     <Style Selector="Window">
       <Setter Property="Icon" Value="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png"/>
       <Setter Property="Background" Value="{StaticResource CanvasBrush}"/>
@@ -208,11 +316,14 @@
     </Style>
     <Style Selector="Button.breadcrumb">
       <Setter Property="HorizontalAlignment" Value="Left"/>
-      <Setter Property="MinHeight" Value="28"/>
-      <Setter Property="Padding" Value="0,4"/>
-      <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="BorderBrush" Value="Transparent"/>
-      <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="HorizontalContentAlignment" Value="Center"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+      <Setter Property="MinHeight" Value="36"/>
+      <Setter Property="Padding" Value="12,6"/>
+      <Setter Property="Background" Value="{StaticResource CanvasBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
     </Style>
     <Style Selector="Button.rename-project">
       <Setter Property="Background" Value="{StaticResource SidebarBrush}"/>
@@ -291,9 +402,13 @@
       <Setter Property="Background" Value="{StaticResource SelectionBorderBrush}"/>
     </Style>
     <Style Selector="Button.primary">
-      <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+      <Setter Property="Background" Value="{StaticResource PrimaryButtonBrush}"/>
       <Setter Property="Foreground" Value="White"/>
       <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+    </Style>
+    <Style Selector="Button.primary /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource PrimaryButtonBrush}"/>
+      <Setter Property="Foreground" Value="White"/>
     </Style>
     <Style Selector="Button.primary PathIcon">
       <Setter Property="Foreground" Value="White"/>
@@ -302,12 +417,17 @@
       <Setter Property="Foreground" Value="{StaticResource DangerBrush}"/>
     </Style>
     <Style Selector="Button.primary:pointerover:not(:disabled) /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{StaticResource AccentHoverBrush}"/>
+      <Setter Property="Background" Value="{StaticResource PrimaryButtonHoverBrush}"/>
       <Setter Property="Foreground" Value="White"/>
     </Style>
     <Style Selector="Button.primary:pressed:not(:disabled) /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{StaticResource AccentPressedBrush}"/>
+      <Setter Property="Background" Value="{StaticResource PrimaryButtonPressedBrush}"/>
       <Setter Property="Foreground" Value="White"/>
+    </Style>
+    <Style Selector="Button.primary:disabled /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource PrimaryButtonBrush}"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
     </Style>
     <Style Selector="Button.danger">
       <Setter Property="Background" Value="{StaticResource DangerSurfaceBrush}"/>
@@ -331,38 +451,11 @@
       <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
       <Setter Property="BorderThickness" Value="2"/>
     </Style>
+    <Style Selector="Button.breadcrumb:focus-visible:not(:disabled) /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Padding" Value="11,5"/>
+    </Style>
     <Style Selector="Button:disabled">
       <Setter Property="Opacity" Value="0.55"/>
-    </Style>
-    <Style Selector="Button.nav">
-      <Setter Property="HorizontalAlignment" Value="Stretch"/>
-      <Setter Property="HorizontalContentAlignment" Value="Left"/>
-      <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="BorderBrush" Value="Transparent"/>
-      <Setter Property="BorderThickness" Value="4,0,0,0"/>
-      <Setter Property="FontSize" Value="16"/>
-      <Setter Property="MinHeight" Value="48"/>
-      <Setter Property="Padding" Value="9,13,13,13"/>
-    </Style>
-    <Style Selector="Button.nav:pointerover:not(:disabled) /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{StaticResource NavigationHoverBrush}"/>
-      <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
-    </Style>
-    <Style Selector="Button.nav:pressed:not(:disabled) /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{StaticResource SelectionBorderBrush}"/>
-    </Style>
-    <Style Selector="Button.nav:focus-visible:not(:disabled) /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
-      <Setter Property="BorderThickness" Value="4,2,2,2"/>
-      <Setter Property="Padding" Value="9,11,11,11"/>
-    </Style>
-    <Style Selector="Button.nav:disabled">
-      <Setter Property="Opacity" Value="0.85"/>
-    </Style>
-    <Style Selector="Button.nav:disabled /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="BorderBrush" Value="Transparent"/>
-      <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
     </Style>
     <Style Selector="Button.navigation-tool">
       <Setter Property="Width" Value="44"/>
@@ -374,11 +467,6 @@
     <Style Selector="Button.navigation-tool.selected">
       <Setter Property="Background" Value="{StaticResource SelectionBrush}"/>
       <Setter Property="BorderBrush" Value="Transparent"/>
-    </Style>
-    <Style Selector="Button.nav.selected">
-      <Setter Property="Background" Value="{StaticResource SelectionBrush}"/>
-      <Setter Property="BorderBrush" Value="{StaticResource SelectionBorderBrush}"/>
-      <Setter Property="BorderThickness" Value="4,1,1,1"/>
     </Style>
     <Style Selector="TextBox">
       <Setter Property="MinHeight" Value="42"/>
@@ -426,6 +514,67 @@
       <Setter Property="TextWrapping" Value="NoWrap"/>
       <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
     </Style>
+    <Style Selector="Button.project-operation">
+      <Setter Property="Width" Value="36"/>
+      <Setter Property="Height" Value="36"/>
+      <Setter Property="MinHeight" Value="36"/>
+      <Setter Property="Padding" Value="6"/>
+      <Setter Property="Background" Value="{StaticResource PrimaryButtonBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+    <Style Selector="Button.project-operation /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource PrimaryButtonBrush}"/>
+      <Setter Property="Foreground" Value="White"/>
+    </Style>
+    <Style Selector="Button.project-operation:pointerover:not(:disabled) /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource PrimaryButtonHoverBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource AccentHoverBrush}"/>
+    </Style>
+    <Style Selector="Button.project-operation:pressed:not(:disabled) /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource PrimaryButtonPressedBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource AccentPressedBrush}"/>
+    </Style>
+    <Style Selector="Button.project-operation:disabled /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource PrimaryButtonBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+    </Style>
+    <Style Selector="Button.project-operation:focus-visible /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="BorderBrush" Value="{StaticResource SelectionBorderBrush}"/>
+      <Setter Property="BorderThickness" Value="2"/>
+      <Setter Property="Padding" Value="5"/>
+    </Style>
+    <Style Selector="Border.shell-header">
+      <Setter Property="Padding" Value="24,12"/>
+    </Style>
+    <Style Selector="Grid#MainContent">
+      <Setter Property="Margin" Value="24,16,24,24"/>
+    </Style>
+    <Style Selector="Grid.projects-page">
+      <Setter Property="RowSpacing" Value="16"/>
+    </Style>
+    <Style Selector="Grid.compact TextBlock.projects-title">
+      <Setter Property="FontSize" Value="28"/>
+    </Style>
+    <Style Selector="Grid.compact Button.new-project">
+      <Setter Property="MinHeight" Value="40"/>
+      <Setter Property="Padding" Value="16,8"/>
+    </Style>
+    <Style Selector="Grid.compact Border.shell-header">
+      <Setter Property="Padding" Value="24,6"/>
+    </Style>
+    <Style Selector="Grid.compact Grid#MainContent">
+      <Setter Property="Margin" Value="24,12"/>
+    </Style>
+    <Style Selector="Grid.compact Grid.projects-page">
+      <Setter Property="RowSpacing" Value="12"/>
+    </Style>
+    <Style Selector="Grid.compact TextBlock.projects-description">
+      <Setter Property="IsVisible" Value="False"/>
+    </Style>
+    <Style Selector="Grid.compact Border.project-details">
+      <Setter Property="Padding" Value="12"/>
+    </Style>
     <Style Selector="Button.project-open">
       <Setter Property="MinWidth" Value="76"/>
       <Setter Property="MinHeight" Value="36"/>
@@ -455,7 +604,7 @@
       <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="CornerRadius" Value="{StaticResource CardRadius}"/>
-      <Setter Property="Padding" Value="16"/>
+      <Setter Property="Padding" Value="16,12"/>
     </Style>
     <Style Selector="ListBox.projects ListBoxItem:pointerover Border.project-card">
       <Setter Property="BorderBrush" Value="{StaticResource SelectionBorderBrush}"/>
@@ -496,8 +645,11 @@
       <Setter Property="Padding" Value="12,6"/>
     </Style>
     <Style Selector="Grid.editor.compact Button.breadcrumb">
-      <Setter Property="MinHeight" Value="24"/>
-      <Setter Property="Padding" Value="0,2"/>
+      <Setter Property="MinHeight" Value="32"/>
+      <Setter Property="Padding" Value="10,4"/>
+    </Style>
+    <Style Selector="Grid.editor.compact Button.breadcrumb:focus-visible:not(:disabled) /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Padding" Value="9,3"/>
     </Style>
     <Style Selector="Grid.editor.compact TextBlock.editor-title">
       <Setter Property="FontSize" Value="28"/>

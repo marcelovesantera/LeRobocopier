@@ -10,6 +10,7 @@ using Avalonia.Media;
 using Avalonia.Data;
 using Avalonia.Threading;
 using Avalonia.Controls.Templates;
+using Avalonia.VisualTree;
 using LeRobocopier.Core;
 
 namespace LeRobocopier.Desktop;
@@ -25,6 +26,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         SizeChanged += (_, _) => UpdateEditorLayout();
         EditorPanel.SizeChanged += (_, _) => UpdateEditorLayout();
+        ProjectSummary.SizeChanged += (_, _) => ProjectSummaryDetails.Spacing = ProjectSummary.Bounds.Height < 320 ? 4 : 10;
         Opened += InitializeWindow;
         Closing += (_, args) => args.Cancel = isInitializing || (DataContext as MainWindowViewModel)?.IsBusy == true;
         Closed += (_, _) =>
@@ -94,11 +96,21 @@ public partial class MainWindow : Window
         }, TimeSpan.FromSeconds(6));
     }
 
-    private async void Copy_Click(object? sender, RoutedEventArgs args) => await RunOperation(false);
+    private async void Copy_Click(object? sender, RoutedEventArgs args) => await RunProjectOperation(sender, false);
 
-    private async void Restore_Click(object? sender, RoutedEventArgs args) => await RunOperation(true);
+    private async void Restore_Click(object? sender, RoutedEventArgs args) => await RunProjectOperation(sender, true);
 
-    private async void Move_Click(object? sender, RoutedEventArgs args) => await RunOperation(false, true);
+    private async void Move_Click(object? sender, RoutedEventArgs args) => await RunProjectOperation(sender, false, true);
+
+    private async Task RunProjectOperation(object? sender, bool restore, bool move = false)
+    {
+        if (DataContext is not MainWindowViewModel { CanCreate: true } viewModel ||
+            sender is not Button { DataContext: Project clicked }) return;
+        var project = viewModel.Projects.FirstOrDefault(current => current.Id == clicked.Id);
+        if (project is null || !project.Active) return;
+        viewModel.Selected = project;
+        await RunOperation(restore, move);
+    }
 
     private async void ChangeBackupRoot_Click(object? sender, RoutedEventArgs args)
     {
@@ -107,20 +119,7 @@ public partial class MainWindow : Window
         viewModel.IsBusy = true;
         try
         {
-            if (!StorageProvider.CanPickFolder) throw new NotSupportedException("The folder picker is unavailable in this environment.");
-            var chosen = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-            {
-                Title = "Choose a new backup root", AllowMultiple = false
-            });
-            try
-            {
-                if (chosen.Count > 0)
-                    backupRoot = chosen[0].TryGetLocalPath() ?? throw new ArgumentException("Select a folder with a full local path.");
-            }
-            finally
-            {
-                foreach (var folder in chosen) folder.Dispose();
-            }
+            backupRoot = await PickFolder(this, "Choose a new backup root", viewModel.BackupRoot);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
@@ -197,7 +196,10 @@ public partial class MainWindow : Window
             {
                 plan = preparation.Plan!;
                 var skip = new CheckBox { Content = $"Do not ask again for {operation}" };
-                if (migration || (restore ? viewModel.ConfirmRestore : move ? viewModel.ConfirmMove : viewModel.ConfirmCopy))
+                var confirmationRequired = migration
+                    ? migrationProjectId is null || plan.Entries.Count > 0
+                    : restore ? viewModel.ConfirmRestore : move ? viewModel.ConfirmMove : viewModel.ConfirmCopy;
+                if (confirmationRequired)
                 {
                     SetOperationText(stage, "Ready for confirmation");
                     SetOperationText(details, migration
@@ -276,7 +278,9 @@ public partial class MainWindow : Window
                 viewModel.RefreshAfterOperation();
                 SetOperationText(stage, result.Failure is not null ? "Operation failed" : result.Warnings.Count > 0 ? "Completed with warnings" : "Completed");
                 SetOperationText(details, migration
-                    ? result.Failure is null ? "Migration completed. The new backup root is active."
+                    ? result.Failure is null ? migrationProjectId is not null && plan.Entries.Count == 0
+                        ? "Backup destination saved. No backup files needed migration."
+                        : "Migration completed. The new backup root is active."
                         : result.BackupRootChanged
                             ? "The new backup root is active. Migration reported a failure; inspect the old backup paths that remain."
                             : "Migration failed before confirming the new backup root. No old backup files were removed. Check the saved-root status below."
@@ -461,6 +465,86 @@ public partial class MainWindow : Window
     private void Settings_Click(object? sender, RoutedEventArgs args) =>
         (DataContext as MainWindowViewModel)?.Navigate(MainPanel.Settings);
 
+    private static Grid FolderDialogLayout(string heading, string description, StackPanel body, Control actions)
+    {
+        var title = new TextBlock { Text = heading };
+        title.Classes.Add("modal-title");
+        var subtitle = new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap };
+        subtitle.Classes.Add("muted");
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 16 };
+        header.Children.Add(new Border
+        {
+            Width = 48, Height = 48, CornerRadius = new CornerRadius(12),
+            Background = (IBrush)Application.Current!.FindResource("SelectionBrush")!,
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new Image
+            {
+                Source = (IImage)Application.Current!.FindResource("SettingsFolderImage")!, Width = 24, Height = 24
+            }
+        });
+        var titles = new StackPanel { Spacing = 4, Children = { title, subtitle } };
+        Grid.SetColumn(titles, 1);
+        header.Children.Add(titles);
+        var layout = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*,Auto"), RowSpacing = 20,
+            Margin = (Thickness)Application.Current!.FindResource("ModalPadding")!
+        };
+        var scroll = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+        Grid.SetRow(scroll, 1);
+        Grid.SetRow(actions, 2);
+        actions.HorizontalAlignment = HorizontalAlignment.Right;
+        layout.Children.Add(header);
+        layout.Children.Add(scroll);
+        layout.Children.Add(actions);
+        return layout;
+    }
+
+    private static Border FolderDialogSection(string label, params Control[] controls)
+    {
+        var title = new TextBlock { Text = label, FontWeight = FontWeight.SemiBold };
+        var content = new StackPanel { Spacing = 10, Children = { title } };
+        foreach (var control in controls) content.Children.Add(control);
+        var section = new Border { Padding = new Thickness(16), Child = content };
+        section.Classes.Add("folder-section");
+        return section;
+    }
+
+    private static TextBlock FolderDialogHelp(string text)
+    {
+        var help = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap };
+        help.Classes.Add("muted");
+        return help;
+    }
+
+    private static Border FolderDialogPath(TextBlock path)
+    {
+        path.TextWrapping = TextWrapping.NoWrap;
+        path.TextTrimming = TextTrimming.CharacterEllipsis;
+        ToolTip.SetTip(path, path.Text);
+        var field = new Border { Padding = new Thickness(12, 10), Child = path };
+        field.Classes.Add("folder-path");
+        return field;
+    }
+
+    private static Border FolderDialogError(TextBlock message)
+    {
+        var surface = new Border { Padding = new Thickness(12), IsVisible = false };
+        surface.Classes.Add("folder-error");
+        var content = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 10 };
+        content.Children.Add(new TextBlock { Text = "\u2717", FontWeight = FontWeight.Bold });
+        Grid.SetColumn(message, 1);
+        content.Children.Add(message);
+        surface.Child = content;
+        message.PropertyChanged += (_, args) =>
+        {
+            if (args.Property != TextBlock.TextProperty) return;
+            surface.IsVisible = !string.IsNullOrWhiteSpace(message.Text);
+            if (surface.IsVisible) Dispatcher.UIThread.Post(() => surface.BringIntoView());
+        };
+        return surface;
+    }
+
     private async void NewProject_Click(object? sender, RoutedEventArgs args)
     {
         if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCreate) return;
@@ -475,40 +559,37 @@ public partial class MainWindow : Window
         var create = new Button { Content = "Create project", IsEnabled = false };
         create.Classes.Add("primary");
         var cancel = new Button { Content = "Cancel" };
-        var choices = new WrapPanel { Orientation = Orientation.Horizontal };
-        create.Margin = new Thickness(0, 0, 12, 0);
-        choices.Children.Add(create);
+        var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         choices.Children.Add(cancel);
-        var content = new StackPanel { Spacing = 16, Margin = (Thickness)Application.Current!.FindResource("ModalPadding")! };
-        var title = new TextBlock { Text = "New project" };
-        title.Classes.Add("modal-title");
-        content.Children.Add(new PathIcon { Data = (Geometry)Application.Current!.FindResource("ProjectIcon")!, HorizontalAlignment = HorizontalAlignment.Left, Width = 32, Height = 32 });
-        content.Children.Add(title);
-        content.Children.Add(new TextBlock { Text = "Project name" });
-        content.Children.Add(name);
+        choices.Children.Add(create);
+        var content = new StackPanel { Spacing = 16 };
+        content.Children.Add(FolderDialogSection("Project name", name));
         var source = new TextBlock { Text = "Choose a source folder", TextWrapping = TextWrapping.NoWrap, TextTrimming = TextTrimming.CharacterEllipsis };
-        var browse = new Button { Content = "Choose source folder" };
-        content.Children.Add(new TextBlock { Text = "Source folder (required)" });
-        content.Children.Add(source);
-        content.Children.Add(browse);
-        var destination = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        var browse = new Button { Content = "Choose source folder", VerticalAlignment = VerticalAlignment.Center };
+        var sourceRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 12 };
+        sourceRow.Children.Add(FolderDialogPath(source));
+        Grid.SetColumn(browse, 1);
+        sourceRow.Children.Add(browse);
+        content.Children.Add(FolderDialogSection("Source folder \u00b7 Required", sourceRow,
+            FolderDialogHelp("Only files and folders inside this location can be added after creating the project.")));
+        var destination = new TextBlock();
         void UpdateDestination()
         {
-            destination.Text = $"Backup destination: {viewModel.BackupRoot}{Path.DirectorySeparatorChar}{viewModel.NewName}";
+            destination.Text = $"{viewModel.BackupRoot}{Path.DirectorySeparatorChar}{viewModel.NewName}";
+            ToolTip.SetTip(destination, destination.Text);
             create.IsEnabled = viewModel.CanCreate && !string.IsNullOrWhiteSpace(viewModel.NewName) && viewModel.NewSourceRoot.Length > 0;
         }
         name.TextChanged += (_, _) => UpdateDestination();
         UpdateDestination();
-        content.Children.Add(destination);
-        content.Children.Add(new TextBlock { Text = "Only files and folders inside the source folder can be added.", TextWrapping = TextWrapping.Wrap });
-        content.Children.Add(error);
-        content.Children.Add(choices);
+        content.Children.Add(FolderDialogSection("Backup destination", FolderDialogPath(destination),
+            FolderDialogHelp("Uses the global backup base with a folder named after this project.")));
+        content.Children.Add(FolderDialogError(error));
         var modal = new Window
         {
-            Title = "New project", Width = Math.Min(520, ClientSize.Width - 48),
+            Title = "New project", Width = Math.Min(600, ClientSize.Width - 48),
             MaxHeight = Math.Max(300, ClientSize.Height - 48), SizeToContent = SizeToContent.Height,
             CanResize = false, WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            DataContext = viewModel, Content = new ScrollViewer { Content = content }
+            DataContext = viewModel, Content = FolderDialogLayout("New project", "Name your project and choose where its original files live.", content, choices)
         };
         modal.Opened += (_, _) => name.Focus();
         browse.Click += async (_, _) =>
@@ -518,7 +599,8 @@ public partial class MainWindow : Window
             browse.IsEnabled = create.IsEnabled = cancel.IsEnabled = false;
             try
             {
-                var folder = await PickFolder(modal, "Choose the project source folder");
+                error.Text = "";
+                var folder = await PickFolder(modal, "Choose the project source folder", viewModel.NewSourceRoot);
                 if (folder is not null)
                 {
                     viewModel.NewSourceRoot = folder;
@@ -551,7 +633,7 @@ public partial class MainWindow : Window
             if (viewModel.MessageSuccess) modal.Close();
             else
             {
-                error.Text = viewModel.StatusMessage;
+                error.Text = $"Error: {viewModel.Message}";
                 UpdateDestination();
                 cancel.IsEnabled = name.IsEnabled = browse.IsEnabled = true;
                 name.Focus();
@@ -563,71 +645,129 @@ public partial class MainWindow : Window
     private void Projects_Click(object? sender, RoutedEventArgs args) =>
         (DataContext as MainWindowViewModel)?.Navigate(MainPanel.Projects);
 
-    private static async Task<string?> PickFolder(Window owner, string title)
+    private static async Task<IStorageFolder?> ResolvePickerStartFolder(Window owner, string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)) return null;
+        string? candidate;
+        try { candidate = Path.GetFullPath(path); }
+        catch (Exception error) when (error is ArgumentException or IOException or NotSupportedException) { return null; }
+        while (candidate is not null)
+        {
+            try
+            {
+                var folder = await owner.StorageProvider.TryGetFolderFromPathAsync(candidate);
+                if (folder is not null) return folder;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException
+                or NotSupportedException or InvalidOperationException or System.Security.SecurityException)
+            {
+                // A start location is only a hint; inaccessible folders must not block the picker.
+            }
+            candidate = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(candidate));
+        }
+        return null;
+    }
+
+    private static async Task<string?> PickFolder(Window owner, string title, string? startPath = null)
     {
         if (!owner.StorageProvider.CanPickFolder) throw new NotSupportedException("The folder picker is unavailable in this environment.");
-        var chosen = await owner.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = title, AllowMultiple = false });
+        using var startFolder = await ResolvePickerStartFolder(owner, startPath);
+        var chosen = await owner.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = title, AllowMultiple = false, SuggestedStartLocation = startFolder
+        });
         try
         {
             return chosen.Count == 0 ? null : chosen[0].TryGetLocalPath()
                 ?? throw new ArgumentException("Select a folder with a full local path.");
         }
-        finally { foreach (var folder in chosen) folder.Dispose(); }
+        finally
+        {
+            foreach (var folder in chosen)
+                if (!ReferenceEquals(folder, startFolder)) folder.Dispose();
+        }
     }
 
     private async void ProjectFolders_Click(object? sender, RoutedEventArgs args)
     {
         if (DataContext is not MainWindowViewModel { Selected: { } project } viewModel || !viewModel.CanCopy) return;
-        var content = new StackPanel { Spacing = 12, Margin = (Thickness)Application.Current!.FindResource("ModalPadding")! };
+        var content = new StackPanel { Spacing = 16 };
         var source = new TextBlock();
         SetOperationText(source, viewModel.ProjectSourceFolder);
         var destination = new TextBlock();
         SetOperationText(destination, viewModel.ProjectBackupFolder);
-        var changeSource = new Button { Content = "Change source folder", IsEnabled = project.SourceRoot is not null };
+        var changeSource = new Button { Content = "Change source folder", IsEnabled = project.SourceRoot is not null, VerticalAlignment = VerticalAlignment.Center };
         var changeDestination = new Button { Content = "Choose custom backup base" };
         var inherit = new Button { Content = "Use global default", IsEnabled = !viewModel.InheritsBackupRoot };
         var close = new Button { Content = "Close" };
-        content.Children.Add(new TextBlock { Text = "Source folder" });
-        content.Children.Add(source);
-        content.Children.Add(changeSource);
-        content.Children.Add(new TextBlock { Text = "Backup destination" });
-        content.Children.Add(destination);
-        content.Children.Add(new TextBlock
+        var error = new TextBlock();
+        error.Classes.Add("error");
+        var sourceRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 12 };
+        sourceRow.Children.Add(FolderDialogPath(source));
+        Grid.SetColumn(changeSource, 1);
+        sourceRow.Children.Add(changeSource);
+        content.Children.Add(FolderDialogSection("Source folder", sourceRow,
+            FolderDialogHelp(project.SourceRoot is null
+                ? "This legacy project uses multiple original paths. Its source folder cannot be changed."
+                : "Changing this folder keeps each item's relative path. Original files stay in place.")));
+        var backupMode = new TextBlock
         {
-            Text = viewModel.InheritsBackupRoot ? "Inherits the global default. Changes to that default also migrate this project's backup." : "Uses a custom backup base. Changes to the global default do not affect this project.",
-            TextWrapping = TextWrapping.Wrap
-        });
-        content.Children.Add(new TextBlock { Text = "The project name is appended to the chosen backup base.", TextWrapping = TextWrapping.Wrap });
-        content.Children.Add(changeDestination);
-        content.Children.Add(inherit);
-        content.Children.Add(close);
+            Text = viewModel.InheritsBackupRoot ? "Global default" : "Custom base", FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = (IBrush)Application.Current!.FindResource("AccentBrush")!
+        };
+        var badge = new Border
+        {
+            Background = (IBrush)Application.Current!.FindResource("SelectionBrush")!,
+            CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 4),
+            HorizontalAlignment = HorizontalAlignment.Left, Child = backupMode
+        };
+        var backupActions = new WrapPanel { Orientation = Orientation.Horizontal };
+        changeDestination.Margin = new Thickness(0, 0, 8, 8);
+        inherit.Margin = new Thickness(0, 0, 0, 8);
+        backupActions.Children.Add(changeDestination);
+        backupActions.Children.Add(inherit);
+        content.Children.Add(FolderDialogSection("Backup destination", badge, FolderDialogPath(destination),
+            FolderDialogHelp(viewModel.InheritsBackupRoot
+                ? "Follows the global backup base. Changing that base also migrates this project's backup."
+                : "Uses its own backup base and stays independent of global changes."),
+            backupActions, FolderDialogHelp("The project name is added to the base you choose. Existing backups require migration confirmation; without a backup, only the destination is saved.")));
+        content.Children.Add(FolderDialogError(error));
+        var layout = FolderDialogLayout("Project folders", $"Manage source and backup locations for {project.Name}.", content, close);
         var modal = new Window
         {
-            Title = $"Folders — {project.Name}", Width = 560, MaxHeight = Math.Max(300, ClientSize.Height - 48),
+            Title = $"Folders — {project.Name}", Width = Math.Min(640, ClientSize.Width - 48), MaxHeight = Math.Max(300, ClientSize.Height - 48),
             SizeToContent = SizeToContent.Height, CanResize = false, WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Content = new ScrollViewer { Content = content }
+            Content = layout
         };
         string? chosenSource = null;
         string? chosenDestination = null;
         var useDefault = false;
         var picking = false;
         modal.Closing += (_, eventArgs) => eventArgs.Cancel = picking;
+        modal.KeyDown += (_, eventArgs) =>
+        {
+            if (eventArgs.Key == Key.Escape && !picking) { modal.Close(); eventArgs.Handled = true; }
+        };
         async Task Choose(bool sourceFolder)
         {
             if (picking) return;
             picking = true;
-            content.IsEnabled = false;
+            layout.IsEnabled = false;
             try
             {
-                var path = await PickFolder(modal, sourceFolder ? "Choose the new source folder" : "Choose the project's backup base");
+                error.Text = "";
+                var startPath = sourceFolder ? project.SourceRoot : project.BackupRootOverride ?? viewModel.BackupRoot;
+                var path = await PickFolder(modal, sourceFolder ? "Choose the new source folder" : "Choose the project's backup base", startPath);
                 if (sourceFolder) chosenSource = path;
                 else chosenDestination = path;
             }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
-                viewModel.ReportError(error.Message);
+                error.Text = exception.Message;
+                viewModel.ReportError(exception.Message);
             }
-            finally { picking = false; content.IsEnabled = true; }
+            finally { picking = false; layout.IsEnabled = true; }
             if (chosenSource is not null || chosenDestination is not null) modal.Close();
         }
         changeSource.Click += async (_, _) => await Choose(true);
@@ -642,23 +782,20 @@ public partial class MainWindow : Window
             var confirm = new Button { Content = "Change source folder" };
             confirm.Classes.Add("primary");
             var back = new Button { Content = "Back" };
-            var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { confirm, back } };
+            var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { back, confirm } };
+            var confirmationBody = new StackPanel { Spacing = 16 };
+            confirmationBody.Children.Add(FolderDialogSection("New source folder", FolderDialogPath(new TextBlock { Text = chosenSource })));
+            confirmationBody.Children.Add(new TextBlock
+            {
+                Text = "Registered items keep their relative paths. Copy and Move will read the new paths; Restore will write to them. Existing original files and backups will not be moved.",
+                TextWrapping = TextWrapping.Wrap
+            });
             var confirmation = new Window
             {
-                Title = "Change source folder", Width = 560, SizeToContent = SizeToContent.Height, CanResize = false,
+                Title = "Change source folder", Width = Math.Min(600, ClientSize.Width - 48),
+                MaxHeight = Math.Max(300, ClientSize.Height - 48), SizeToContent = SizeToContent.Height, CanResize = false,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Content = new StackPanel
-                {
-                    Spacing = 16, Margin = (Thickness)Application.Current!.FindResource("ModalPadding")!,
-                    Children =
-                    {
-                        new TextBlock
-                        {
-                            Text = $"Use {chosenSource} as the source folder for {project.Name}? Registered items retain their relative paths. Copy and Move will read the new paths; Restore will write to them. Existing original files and backups will not be moved.",
-                            TextWrapping = TextWrapping.Wrap
-                        }, choices
-                    }
-                }
+                Content = FolderDialogLayout("Change source folder", $"Confirm the new source for {project.Name}.", confirmationBody, choices)
             };
             confirm.Click += (_, _) => confirmation.Close(true);
             back.Click += (_, _) => confirmation.Close(false);
@@ -666,14 +803,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OpenSelected_Click(object? sender, RoutedEventArgs args)
-    {
-        if (DataContext is MainWindowViewModel { Selected: { } project } viewModel)
-            viewModel.Open(project);
-    }
-
     private void UpdateEditorLayout()
     {
+        Shell.Classes.Set("compact", ClientSize.Height < 600);
         StatusScroll.MaxHeight = ClientSize.Height < 600 ? 48 : 100;
         if (EditorPanel.Bounds.Height <= 0) return;
         var compact = EditorPanel.Bounds.Height < 550;
@@ -708,10 +840,21 @@ public partial class MainWindow : Window
             (DataContext as MainWindowViewModel)?.Open(project);
     }
 
+    private void ProjectCard_DoubleTapped(object? sender, TappedEventArgs args)
+    {
+        if (DataContext is not MainWindowViewModel { CanCreate: true } viewModel ||
+            sender is not Border { DataContext: Project clicked }) return;
+        if (args.Source is Visual source && (source is Button || source.FindAncestorOfType<Button>() is not null)) return;
+        var project = viewModel.Projects.FirstOrDefault(current => current.Id == clicked.Id);
+        if (project is null) return;
+        args.Handled = true;
+        viewModel.Open(project);
+    }
+
     private void ItemIcon_Loaded(object? sender, RoutedEventArgs args)
     {
-        if (sender is PathIcon { DataContext: SelectedItem item } icon)
-            icon.Data = (Geometry)Application.Current!.FindResource(item.Type == ItemType.Folder ? "FolderIcon" : "FileIcon")!;
+        if (sender is Image { DataContext: SelectedItem item } icon)
+            icon.Source = (IImage)Application.Current!.FindResource(item.Type == ItemType.Folder ? "SummaryFolderImage" : "FileItemImage")!;
     }
 
     private void Remove_Click(object? sender, RoutedEventArgs args)
@@ -887,25 +1030,39 @@ public partial class MainWindow : Window
                 viewModel.ReportError("The picker is unavailable in this environment.");
                 return;
             }
+            viewModel.IsBusy = true;
+            var startPath = project.SourceRoot;
+            if (startPath is null && project.Items.FirstOrDefault() is { } legacyItem)
+                startPath = legacyItem.Type == ItemType.Folder ? legacyItem.Path : Path.GetDirectoryName(legacyItem.Path);
+            using var startFolder = await ResolvePickerStartFolder(this, startPath);
             IReadOnlyList<IStorageItem> chosen = type == ItemType.File
-                ? await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "Add files", AllowMultiple = true })
-                : await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Add folders", AllowMultiple = true });
+                ? await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Add files", AllowMultiple = true, SuggestedStartLocation = startFolder
+                })
+                : await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+                {
+                    Title = "Add folders", AllowMultiple = true, SuggestedStartLocation = startFolder
+                });
             try
             {
                 if (chosen.Count == 0) return;
                 var items = chosen.Select(item => new SelectedItem(type,
                     item.TryGetLocalPath() ?? throw new ArgumentException("Select items with full local paths."))).ToArray();
-                // The ID captured before the dialog prevents adding items to a different project.
+                // Release the picker guard before AddItems checks CanCreate; no await can change the captured target.
+                viewModel.IsBusy = false;
                 viewModel.AddItems(project.Id, items);
             }
             finally
             {
-                foreach (var item in chosen) item.Dispose();
+                foreach (var item in chosen)
+                    if (!ReferenceEquals(item, startFolder)) item.Dispose();
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             viewModel.ReportError(error.Message);
         }
+        finally { viewModel.IsBusy = false; }
     }
 }
