@@ -162,6 +162,25 @@
   </Application.Resources>
   <Application.Styles>
     <FluentTheme/>
+    <Style Selector="Border.folder-section">
+      <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="{StaticResource CardRadius}"/>
+    </Style>
+    <Style Selector="Border.folder-path">
+      <Setter Property="Background" Value="{StaticResource CanvasBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="{StaticResource ControlRadius}"/>
+    </Style>
+    <Style Selector="Border.folder-error">
+      <Setter Property="Background" Value="{StaticResource DangerSurfaceBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource DangerBorderBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="{StaticResource ControlRadius}"/>
+      <Setter Property="TextElement.Foreground" Value="{StaticResource DangerBrush}"/>
+    </Style>
     <Style Selector="Window">
       <Setter Property="Icon" Value="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png"/>
       <Setter Property="Background" Value="{StaticResource CanvasBrush}"/>

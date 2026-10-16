@@ -167,7 +167,10 @@ public sealed partial class ProjectRegistry : IDisposable
     {
         var backupRoot = project.BackupRootOverride ?? configuration.BackupRoot;
         if (project.SourceRoot is { } sourceRoot)
+        {
+            ValidateCopyPath(sourceRoot, ItemType.Folder, true);
             ValidateItem(new SelectedItem(ItemType.Folder, sourceRoot), Array.Empty<SelectedItem>(), backupRoot);
+        }
         foreach (var item in project.Items) ValidateItem(item, Array.Empty<SelectedItem>(), backupRoot);
         var backup = NormalizePath(Path.Combine(backupRoot, project.Name));
         foreach (var registered in configuration.Projects.Where(current => current.Id != project.Id).Append(project))

@@ -101,7 +101,7 @@
                 <TextBlock Classes="muted" Text="Select a project to view its details." ToolTip.Tip="Select a project to view its details." IsVisible="{Binding NoSelection}"/>
                 <Grid RowDefinitions="*,Auto" RowSpacing="16" IsVisible="{Binding HasSelection}">
                   <Grid ClipToBounds="True">
-                    <StackPanel Spacing="20" VerticalAlignment="Top">
+                    <StackPanel x:Name="ProjectSummaryDetails" Spacing="20" VerticalAlignment="Top">
                       <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
                         <Image Source="avares://LeRobocopier.Desktop/Assets/lerobocopier-small-icon.png" Width="48" Height="48" VerticalAlignment="Top"/>
                         <StackPanel Grid.Column="1" Spacing="6">

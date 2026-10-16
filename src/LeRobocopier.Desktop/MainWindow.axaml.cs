@@ -25,6 +25,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         SizeChanged += (_, _) => UpdateEditorLayout();
         EditorPanel.SizeChanged += (_, _) => UpdateEditorLayout();
+        ProjectSummary.SizeChanged += (_, _) => ProjectSummaryDetails.Spacing = ProjectSummary.Bounds.Height < 320 ? 10 : 20;
         Opened += InitializeWindow;
         Closing += (_, args) => args.Cancel = isInitializing || (DataContext as MainWindowViewModel)?.IsBusy == true;
         Closed += (_, _) =>
@@ -461,6 +462,87 @@ public partial class MainWindow : Window
     private void Settings_Click(object? sender, RoutedEventArgs args) =>
         (DataContext as MainWindowViewModel)?.Navigate(MainPanel.Settings);
 
+    private static Grid FolderDialogLayout(string heading, string description, StackPanel body, Control actions)
+    {
+        var title = new TextBlock { Text = heading };
+        title.Classes.Add("modal-title");
+        var subtitle = new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap };
+        subtitle.Classes.Add("muted");
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 16 };
+        header.Children.Add(new Border
+        {
+            Width = 48, Height = 48, CornerRadius = new CornerRadius(12),
+            Background = (IBrush)Application.Current!.FindResource("SelectionBrush")!,
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new PathIcon
+            {
+                Data = (Geometry)Application.Current!.FindResource("FolderIcon")!, Width = 24, Height = 24,
+                Foreground = (IBrush)Application.Current!.FindResource("AccentBrush")!
+            }
+        });
+        var titles = new StackPanel { Spacing = 4, Children = { title, subtitle } };
+        Grid.SetColumn(titles, 1);
+        header.Children.Add(titles);
+        var layout = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*,Auto"), RowSpacing = 20,
+            Margin = (Thickness)Application.Current!.FindResource("ModalPadding")!
+        };
+        var scroll = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+        Grid.SetRow(scroll, 1);
+        Grid.SetRow(actions, 2);
+        actions.HorizontalAlignment = HorizontalAlignment.Right;
+        layout.Children.Add(header);
+        layout.Children.Add(scroll);
+        layout.Children.Add(actions);
+        return layout;
+    }
+
+    private static Border FolderDialogSection(string label, params Control[] controls)
+    {
+        var title = new TextBlock { Text = label, FontWeight = FontWeight.SemiBold };
+        var content = new StackPanel { Spacing = 10, Children = { title } };
+        foreach (var control in controls) content.Children.Add(control);
+        var section = new Border { Padding = new Thickness(16), Child = content };
+        section.Classes.Add("folder-section");
+        return section;
+    }
+
+    private static TextBlock FolderDialogHelp(string text)
+    {
+        var help = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap };
+        help.Classes.Add("muted");
+        return help;
+    }
+
+    private static Border FolderDialogPath(TextBlock path)
+    {
+        path.TextWrapping = TextWrapping.NoWrap;
+        path.TextTrimming = TextTrimming.CharacterEllipsis;
+        ToolTip.SetTip(path, path.Text);
+        var field = new Border { Padding = new Thickness(12, 10), Child = path };
+        field.Classes.Add("folder-path");
+        return field;
+    }
+
+    private static Border FolderDialogError(TextBlock message)
+    {
+        var surface = new Border { Padding = new Thickness(12), IsVisible = false };
+        surface.Classes.Add("folder-error");
+        var content = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), ColumnSpacing = 10 };
+        content.Children.Add(new TextBlock { Text = "\u2717", FontWeight = FontWeight.Bold });
+        Grid.SetColumn(message, 1);
+        content.Children.Add(message);
+        surface.Child = content;
+        message.PropertyChanged += (_, args) =>
+        {
+            if (args.Property != TextBlock.TextProperty) return;
+            surface.IsVisible = !string.IsNullOrWhiteSpace(message.Text);
+            if (surface.IsVisible) Dispatcher.UIThread.Post(() => surface.BringIntoView());
+        };
+        return surface;
+    }
+
     private async void NewProject_Click(object? sender, RoutedEventArgs args)
     {
         if (DataContext is not MainWindowViewModel viewModel || !viewModel.CanCreate) return;
@@ -475,40 +557,33 @@ public partial class MainWindow : Window
         var create = new Button { Content = "Create project", IsEnabled = false };
         create.Classes.Add("primary");
         var cancel = new Button { Content = "Cancel" };
-        var choices = new WrapPanel { Orientation = Orientation.Horizontal };
-        create.Margin = new Thickness(0, 0, 12, 0);
-        choices.Children.Add(create);
+        var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         choices.Children.Add(cancel);
-        var content = new StackPanel { Spacing = 16, Margin = (Thickness)Application.Current!.FindResource("ModalPadding")! };
-        var title = new TextBlock { Text = "New project" };
-        title.Classes.Add("modal-title");
-        content.Children.Add(new PathIcon { Data = (Geometry)Application.Current!.FindResource("ProjectIcon")!, HorizontalAlignment = HorizontalAlignment.Left, Width = 32, Height = 32 });
-        content.Children.Add(title);
-        content.Children.Add(new TextBlock { Text = "Project name" });
-        content.Children.Add(name);
+        choices.Children.Add(create);
+        var content = new StackPanel { Spacing = 16 };
+        content.Children.Add(FolderDialogSection("Project name", name));
         var source = new TextBlock { Text = "Choose a source folder", TextWrapping = TextWrapping.NoWrap, TextTrimming = TextTrimming.CharacterEllipsis };
         var browse = new Button { Content = "Choose source folder" };
-        content.Children.Add(new TextBlock { Text = "Source folder (required)" });
-        content.Children.Add(source);
-        content.Children.Add(browse);
-        var destination = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        content.Children.Add(FolderDialogSection("Source folder \u00b7 Required", FolderDialogPath(source), browse,
+            FolderDialogHelp("Only files and folders inside this location can be added after creating the project.")));
+        var destination = new TextBlock();
         void UpdateDestination()
         {
-            destination.Text = $"Backup destination: {viewModel.BackupRoot}{Path.DirectorySeparatorChar}{viewModel.NewName}";
+            destination.Text = $"{viewModel.BackupRoot}{Path.DirectorySeparatorChar}{viewModel.NewName}";
+            ToolTip.SetTip(destination, destination.Text);
             create.IsEnabled = viewModel.CanCreate && !string.IsNullOrWhiteSpace(viewModel.NewName) && viewModel.NewSourceRoot.Length > 0;
         }
         name.TextChanged += (_, _) => UpdateDestination();
         UpdateDestination();
-        content.Children.Add(destination);
-        content.Children.Add(new TextBlock { Text = "Only files and folders inside the source folder can be added.", TextWrapping = TextWrapping.Wrap });
-        content.Children.Add(error);
-        content.Children.Add(choices);
+        content.Children.Add(FolderDialogSection("Backup destination", FolderDialogPath(destination),
+            FolderDialogHelp("Uses the global backup base with a folder named after this project.")));
+        content.Children.Add(FolderDialogError(error));
         var modal = new Window
         {
-            Title = "New project", Width = Math.Min(520, ClientSize.Width - 48),
+            Title = "New project", Width = Math.Min(600, ClientSize.Width - 48),
             MaxHeight = Math.Max(300, ClientSize.Height - 48), SizeToContent = SizeToContent.Height,
             CanResize = false, WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            DataContext = viewModel, Content = new ScrollViewer { Content = content }
+            DataContext = viewModel, Content = FolderDialogLayout("New project", "Name your project and choose where its original files live.", content, choices)
         };
         modal.Opened += (_, _) => name.Focus();
         browse.Click += async (_, _) =>
@@ -518,6 +593,7 @@ public partial class MainWindow : Window
             browse.IsEnabled = create.IsEnabled = cancel.IsEnabled = false;
             try
             {
+                error.Text = "";
                 var folder = await PickFolder(modal, "Choose the project source folder");
                 if (folder is not null)
                 {
@@ -551,7 +627,7 @@ public partial class MainWindow : Window
             if (viewModel.MessageSuccess) modal.Close();
             else
             {
-                error.Text = viewModel.StatusMessage;
+                error.Text = $"Error: {viewModel.Message}";
                 UpdateDestination();
                 cancel.IsEnabled = name.IsEnabled = browse.IsEnabled = true;
                 name.Focus();
@@ -578,7 +654,7 @@ public partial class MainWindow : Window
     private async void ProjectFolders_Click(object? sender, RoutedEventArgs args)
     {
         if (DataContext is not MainWindowViewModel { Selected: { } project } viewModel || !viewModel.CanCopy) return;
-        var content = new StackPanel { Spacing = 12, Margin = (Thickness)Application.Current!.FindResource("ModalPadding")! };
+        var content = new StackPanel { Spacing = 16 };
         var source = new TextBlock();
         SetOperationText(source, viewModel.ProjectSourceFolder);
         var destination = new TextBlock();
@@ -587,47 +663,69 @@ public partial class MainWindow : Window
         var changeDestination = new Button { Content = "Choose custom backup base" };
         var inherit = new Button { Content = "Use global default", IsEnabled = !viewModel.InheritsBackupRoot };
         var close = new Button { Content = "Close" };
-        content.Children.Add(new TextBlock { Text = "Source folder" });
-        content.Children.Add(source);
-        content.Children.Add(changeSource);
-        content.Children.Add(new TextBlock { Text = "Backup destination" });
-        content.Children.Add(destination);
-        content.Children.Add(new TextBlock
+        var error = new TextBlock();
+        error.Classes.Add("error");
+        content.Children.Add(FolderDialogSection("Source folder", FolderDialogPath(source), changeSource,
+            FolderDialogHelp(project.SourceRoot is null
+                ? "This legacy project uses multiple original paths. Its source folder cannot be changed."
+                : "Changing this folder keeps each item's relative path. Original files stay in place.")));
+        var backupMode = new TextBlock
         {
-            Text = viewModel.InheritsBackupRoot ? "Inherits the global default. Changes to that default also migrate this project's backup." : "Uses a custom backup base. Changes to the global default do not affect this project.",
-            TextWrapping = TextWrapping.Wrap
-        });
-        content.Children.Add(new TextBlock { Text = "The project name is appended to the chosen backup base.", TextWrapping = TextWrapping.Wrap });
-        content.Children.Add(changeDestination);
-        content.Children.Add(inherit);
-        content.Children.Add(close);
+            Text = viewModel.InheritsBackupRoot ? "Global default" : "Custom base", FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = (IBrush)Application.Current!.FindResource("AccentBrush")!
+        };
+        var badge = new Border
+        {
+            Background = (IBrush)Application.Current!.FindResource("SelectionBrush")!,
+            CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 4),
+            HorizontalAlignment = HorizontalAlignment.Left, Child = backupMode
+        };
+        var backupActions = new WrapPanel { Orientation = Orientation.Horizontal };
+        changeDestination.Margin = new Thickness(0, 0, 8, 8);
+        inherit.Margin = new Thickness(0, 0, 0, 8);
+        backupActions.Children.Add(changeDestination);
+        backupActions.Children.Add(inherit);
+        content.Children.Add(FolderDialogSection("Backup destination", badge, FolderDialogPath(destination),
+            FolderDialogHelp(viewModel.InheritsBackupRoot
+                ? "Follows the global backup base. Changing that base also migrates this project's backup."
+                : "Uses its own backup base and stays independent of global changes."),
+            backupActions, FolderDialogHelp("The project name is added to the base you choose. Changing the destination requires confirmation to migrate the backup.")));
+        content.Children.Add(FolderDialogError(error));
+        var layout = FolderDialogLayout("Project folders", $"Manage source and backup locations for {project.Name}.", content, close);
         var modal = new Window
         {
-            Title = $"Folders — {project.Name}", Width = 560, MaxHeight = Math.Max(300, ClientSize.Height - 48),
+            Title = $"Folders — {project.Name}", Width = Math.Min(640, ClientSize.Width - 48), MaxHeight = Math.Max(300, ClientSize.Height - 48),
             SizeToContent = SizeToContent.Height, CanResize = false, WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Content = new ScrollViewer { Content = content }
+            Content = layout
         };
         string? chosenSource = null;
         string? chosenDestination = null;
         var useDefault = false;
         var picking = false;
         modal.Closing += (_, eventArgs) => eventArgs.Cancel = picking;
+        modal.KeyDown += (_, eventArgs) =>
+        {
+            if (eventArgs.Key == Key.Escape && !picking) { modal.Close(); eventArgs.Handled = true; }
+        };
         async Task Choose(bool sourceFolder)
         {
             if (picking) return;
             picking = true;
-            content.IsEnabled = false;
+            layout.IsEnabled = false;
             try
             {
+                error.Text = "";
                 var path = await PickFolder(modal, sourceFolder ? "Choose the new source folder" : "Choose the project's backup base");
                 if (sourceFolder) chosenSource = path;
                 else chosenDestination = path;
             }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
-                viewModel.ReportError(error.Message);
+                error.Text = exception.Message;
+                viewModel.ReportError(exception.Message);
             }
-            finally { picking = false; content.IsEnabled = true; }
+            finally { picking = false; layout.IsEnabled = true; }
             if (chosenSource is not null || chosenDestination is not null) modal.Close();
         }
         changeSource.Click += async (_, _) => await Choose(true);
@@ -642,23 +740,20 @@ public partial class MainWindow : Window
             var confirm = new Button { Content = "Change source folder" };
             confirm.Classes.Add("primary");
             var back = new Button { Content = "Back" };
-            var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { confirm, back } };
+            var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { back, confirm } };
+            var confirmationBody = new StackPanel { Spacing = 16 };
+            confirmationBody.Children.Add(FolderDialogSection("New source folder", FolderDialogPath(new TextBlock { Text = chosenSource })));
+            confirmationBody.Children.Add(new TextBlock
+            {
+                Text = "Registered items keep their relative paths. Copy and Move will read the new paths; Restore will write to them. Existing original files and backups will not be moved.",
+                TextWrapping = TextWrapping.Wrap
+            });
             var confirmation = new Window
             {
-                Title = "Change source folder", Width = 560, SizeToContent = SizeToContent.Height, CanResize = false,
+                Title = "Change source folder", Width = Math.Min(600, ClientSize.Width - 48),
+                MaxHeight = Math.Max(300, ClientSize.Height - 48), SizeToContent = SizeToContent.Height, CanResize = false,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Content = new StackPanel
-                {
-                    Spacing = 16, Margin = (Thickness)Application.Current!.FindResource("ModalPadding")!,
-                    Children =
-                    {
-                        new TextBlock
-                        {
-                            Text = $"Use {chosenSource} as the source folder for {project.Name}? Registered items retain their relative paths. Copy and Move will read the new paths; Restore will write to them. Existing original files and backups will not be moved.",
-                            TextWrapping = TextWrapping.Wrap
-                        }, choices
-                    }
-                }
+                Content = FolderDialogLayout("Change source folder", $"Confirm the new source for {project.Name}.", confirmationBody, choices)
             };
             confirm.Click += (_, _) => confirmation.Close(true);
             back.Click += (_, _) => confirmation.Close(false);

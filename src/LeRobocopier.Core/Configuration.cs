@@ -63,5 +63,5 @@ public static class UserDirectories
     }
 
     public static string BackupRoot() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "LeRobocopier");
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "LeRobocopier", "Backups");
 }

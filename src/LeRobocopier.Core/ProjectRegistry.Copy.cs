@@ -471,6 +471,7 @@ public sealed partial class ProjectRegistry
         foreach (var project in migrationRoot is null || projectId != Guid.Empty ? [GetProject(projectId)] :
             State.Projects.Where(project => project.BackupRootOverride is null))
         {
+            inventoryPath = project.SourceRoot;
             ValidateProjectPaths(project, State);
             var projectRoot = project.BackupRootOverride ?? State.BackupRoot;
             if (migrationRoot is not null && ContainsPath(projectRoot, migrationRoot) && ContainsPath(migrationRoot, projectRoot)) continue;
@@ -519,6 +520,12 @@ public sealed partial class ProjectRegistry
                         Path.GetRelativePath(selectedSource, source)));
                     if (!ContainsPath(restore ? original : backup, destination))
                         throw new IOException($"Invalid mapped destination: {destination}");
+                    var mappedBackup = restore ? source : destination;
+                    if (item.Type == ItemType.File && ContainsPath(mappedBackup, destinationRoot) && ContainsPath(destinationRoot, mappedBackup))
+                    {
+                        inventoryPath = mappedBackup;
+                        throw new IOException($"A file cannot occupy the project backup folder: {mappedBackup}");
+                    }
                     inventoryPath = destination;
                     ValidateCopyPath(destination, item.Type, true);
                     entries.Add(new CopyEntry(item.Type, source, destination));
